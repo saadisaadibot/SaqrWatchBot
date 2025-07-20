@@ -1,40 +1,33 @@
 from flask import Flask, request
-import os
-import requests
 
 app = Flask(__name__)
 
-# إعدادات التوكن والشات
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
-
-# دالة إرسال رسالة تيليغرام (اختياري)
-def send_message(text):
-    if BOT_TOKEN and CHAT_ID:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        data = {"chat_id": CHAT_ID, "text": text}
-        try:
-            requests.post(url, data=data)
-        except Exception as e:
-            print("❌ Error sending message:", e)
-
-@app.route("/")
+@app.route('/')
 def home():
-    return "✅ SaqrWatchBot is running"
+    return '✅ SaqrWatchBot is alive!'
 
-@app.route("/webhook", methods=["POST"])
+@app.route('/webhook', methods=['POST'])
 def webhook():
     try:
         data = request.get_json(force=True)
         print("📬 Webhook received:", data)
 
-        # رد تجريبي على أي رسالة (اختياري)
-        send_message("📡 تم استلام الإشارة من صقر!")
+        # رد اختياري للرد المباشر عبر Telegram (اختياري فقط للعرض)
+        # chat_id = data['message']['chat']['id']
+        # text = "✅ الرسالة وصلت"
+        # send_message(chat_id, text)
 
-        return "Received ✅", 200
+        return 'OK', 200
     except Exception as e:
-        print("❌ Webhook error:", e)
-        return "Error", 500
+        print("❌ Webhook Error:", str(e))
+        return 'ERROR', 500
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+# تقدر تضيف send_message إذا بدك رد مباشر
+# import requests, os
+# TOKEN = os.getenv("BOT_TOKEN")
+# def send_message(chat_id, text):
+#     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+#     requests.post(url, data={"chat_id": chat_id, "text": text})
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8080)
