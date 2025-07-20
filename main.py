@@ -1,56 +1,46 @@
 import os
-from flask import Flask, request
 import redis
 import requests
+from flask import Flask, request
 
-# إعداد المتغيرات
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+# إعداد البوت و Redis
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # ضيف هاد المفتاح بالمتغيرات على Railway
+CHAT_ID = os.getenv("CHAT_ID")      # ضيف الشات آيدي كمان
 REDIS_URL = os.getenv("REDIS_URL")
+r = redis.Redis.from_url(REDIS_URL)
 
-# إعداد Redis
-r = redis.from_url(REDIS_URL)
-
-# إعداد Flask
 app = Flask(__name__)
-BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-# دالة إرسال رسالة إلى تيليغرام
 def send_message(text):
-    url = f"{BASE_URL}/sendMessage"
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     data = {"chat_id": CHAT_ID, "text": text}
     try:
         requests.post(url, data=data)
     except Exception as e:
-        print("❌ Telegram Send Error:", str(e))
+        print("❌ Failed to send Telegram message:", str(e))
 
-# نقطة اختبار السيرفر /
-@app.route("/", methods=["GET"])
+@app.route("/")
 def home():
-    return "🦅 Saqr Bot is Alive", 200
+    return "✅ SaqrWatchBot is running", 200
 
-# نقطة استقبال Webhook
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
         data = request.get_json(force=True)
-        print("📨 Received Webhook:", data)
+        print("📬 Webhook Received:", data)
 
         if not data or "message" not in data:
-            print("⚠️ No message in data")
+            print("⚠️ No valid message in payload")
             return "", 200
 
         text = data["message"].get("text", "")
-        print("📄 Received Text:", text)
+        print("📝 Message Text:", text)
 
-        if "-EUR" in text and len(text) <= 15:
-            if r:
-                r.hset("orders", text, "صقر")
-                send_message(f"🦅 أرسل العملة: {text}")
-            else:
-                send_message("🧨 Redis غير متصل")
+        if "-EUR" in text and len(text) <= 12:
+            r.hset("orders", text, "من صقر")
+            send_message(f"🦅 تم تسجيل العملة: {text}")
         else:
-            send_message("🦅 صلّحلي أمر واضح فيه -EUR")
+            send_message("🪶 أرسل أمر واضح فيه عملة بصيغة مثل ADA-EUR")
 
         return "", 200
 
@@ -58,7 +48,6 @@ def webhook():
         print("💥 Webhook ERROR:", str(e))
         return "Internal Error", 500
 
-# تشغيل التطبيق على Railway
 if __name__ == "__main__":
-    send_message("🦅 صقر اشتغل على Railway")
+    send_message("🦅 صقر اشتغل على Railway بنجاح")
     app.run(host="0.0.0.0", port=8080)
