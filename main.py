@@ -8,47 +8,46 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
 print("🔧 Starting Debug Bot...")
-print("📡 BOT_TOKEN:", BOT_TOKEN)
+print("🛰️ BOT_TOKEN:", BOT_TOKEN)
 print("💬 CHAT_ID:", CHAT_ID)
 
 def send_message(text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         res = requests.post(url, data={"chat_id": CHAT_ID, "text": text})
-        print("📨 Telegram status:", res.status_code)
+        print("📨 Telegram Response:", res.status_code)
         if not res.ok:
-            print("❌ Telegram Error:", res.text)
+            print("❌ Error Sending Message:", res.text)
     except Exception as e:
-        print("❌ Send Failed:", e)
+        print("💥 Telegram Send Exception:", str(e))
 
 @app.route("/")
-def index():
-    return "Saqr Debug Bot Running ✅", 200
+def home():
+    return "Debug Bot is alive ✅", 200
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
         data = request.get_json(force=True)
-        print("📩 Webhook Received:", data)
+        print("📩 Received Data:", data)
 
         if not data or "message" not in data:
-            print("⚠️ Missing message block!")
+            print("⚠️ No message found.")
             return "No message", 200
 
-        msg = data["message"]
-        chat_id = msg["chat"]["id"]
-        text = msg.get("text", "")
+        text = data["message"].get("text", "").strip()
+        print("✉️ Message Text:", text)
 
-        print(f"📥 Text: {text} | From Chat ID: {chat_id}")
-        send_message(f"📨 استلمت: {text}")
-
+        send_message(f"📡 Debug Received: {text}")
         return "OK", 200
 
     except Exception as e:
-        print("💥 ERROR in webhook():", str(e))
-        send_message("💥 مشكلة داخل /webhook: " + str(e))
-        return "Webhook Error", 500
+        error_text = f"🔥 Webhook Exception: {str(e)}"
+        print(error_text)
+        send_message(error_text)
+        return "ERROR", 500
 
 if __name__ == "__main__":
     print("🚀 Flask running...")
+    send_message("🧪 بوت التجربة اشتغل بنجاح!")
     app.run(host="0.0.0.0", port=8080)
