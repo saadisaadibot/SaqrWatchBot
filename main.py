@@ -1,52 +1,40 @@
-from flask import Flask, request
-import requests
 import os
+import requests
+from flask import Flask, request
 
 app = Flask(__name__)
 
-# --- إعداد التوكن من البيئة ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-# --- دالة إرسال رسالة تيليغرام ---
+
 def send_message(chat_id, text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": chat_id, "text": text})
+    url = f"{BASE_URL}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text}
+    requests.post(url, data=payload)
 
-# --- الصفحة الرئيسية ---
-@app.route('/')
+
+@app.route("/", methods=["GET"])
 def home():
-    return '✅ SaqrWatchBot is alive!'
+    return "✅ Bot is running!", 200
 
-# --- نقطة استلام Webhook ---
-@app.route('/webhook', methods=['POST'])
+
+@app.route("/", methods=["POST"])
 def webhook():
-    try:
-        data = request.get_json(force=True)
-        print("📩 Webhook received:", data)
+    data = request.get_json()
 
-        # جرب نستخرج chat_id والنص من عدة أنواع محتملة
-        chat_id = None
-        text = None
+    if "message" in data:
+        chat_id = data["message"]["chat"]["id"]
+        text = data["message"].get("text", "").lower()
 
-        if 'message' in data:
-            chat_id = data['message']['chat']['id']
-            text = data['message'].get('text')
-        elif 'edited_message' in data:
-            chat_id = data['edited_message']['chat']['id']
-            text = data['edited_message'].get('text')
-        elif 'callback_query' in data:
-            chat_id = data['callback_query']['from']['id']
-            text = data['callback_query'].get('data')
+        if text == "كيفك":
+            send_message(chat_id, "تمام الحمد لله، إنت كيفك؟ 😄")
 
-        if chat_id and text:
-            print(f"💬 From {chat_id}: {text}")
-            send_message(chat_id, "✅ تم استلام الرسالة!")
+    return "ok", 200
 
-    except Exception as e:
-        print("❌ Webhook Error:", str(e))
 
-    return 'OK', 200
-
-# --- تشغيل السيرفر ---
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080)
+# لما يشتغل Railway ويبعت أول رسالة
+if __name__ == "__main__":
+    send_message(CHAT_ID, "✅ البوت اشتغل بنجاح!")
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
