@@ -1,32 +1,28 @@
-import os
 from flask import Flask, request
-import requests
+import redis
+import os
+
+# إعداد Redis
+REDIS_URL = os.getenv("REDIS_URL")
+r = redis.from_url(REDIS_URL)
 
 app = Flask(__name__)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")  # حط التوكن بمتغيرات Railway
-BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-
-@app.route('/webhook', methods=['POST'])
+@app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.get_json()
-    
-    if not data or "message" not in data:
-        return "No message", 200
 
-    message = data["message"]
-    chat_id = message["chat"]["id"]
-    text = message.get("text", "")
+    if data and "message" in data:
+        text = data["message"].get("text", "").strip().upper()
 
-    print("📥 رسالة وصلت من:", message.get("from", {}).get("username", "مجهول"))
-    print("📢 Chat ID:", chat_id)
-    print("📝 الرسالة:", text)
+        # نتأكد إنها عملة بصيغة XXX-EUR
+        if text.endswith("-EUR") and "-" in text and len(text.split("-")[0]) >= 2:
+            coin = text
+            r.sadd("watchlist", coin)
+            print(f"✅ تم تسجيل العملة: {coin}")
+            return f"تمت إضافة {coin} إلى المراقبة", 200
 
-    if "شو عم تعمل" in text:
-        reply = "عم راقب السوق يا ورد 😎"
-        requests.post(BASE_URL, data={"chat_id": chat_id, "text": reply})
+    return "No valid coin", 200
 
-    return "OK", 200
-
-if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=8000)
+if __name__ == "__main__":
+    app.run(port=8000)
