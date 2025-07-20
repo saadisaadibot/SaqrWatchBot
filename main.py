@@ -4,17 +4,16 @@ from flask import Flask, request
 
 app = Flask(__name__)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")  # مؤقتًا نحتفظ فيه بس ما ضروري هون
+BOT_TOKEN = os.getenv("SAQR_BOT_TOKEN")
+CHAT_ID = os.getenv("SAQR_CHAT_ID")
 
 def send_message(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    data = {"chat_id": CHAT_ID, "text": text}
-    requests.post(url, data=data)
+    requests.post(url, data={"chat_id": CHAT_ID, "text": text})
 
 @app.route("/")
 def home():
-    return "Saqer Bot is Alive! 🦅", 200
+    return "Saqr is flying 🦅", 200
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -22,17 +21,11 @@ def webhook():
     if not data or "message" not in data:
         return '', 200
 
-    chat_id = data["message"]["chat"]["id"]
-    text = data["message"].get("text", "")
-
-    # رد وهمي
-    reply = f"📡 صقر استلم رسالتك: {text}"
-    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
-        "chat_id": chat_id,
-        "text": reply
-    })
-
+    msg = data["message"].get("text", "")
+    if "صقر" in msg:
+        send_message("🦅 حاضر يا باشا! أنا صقر وجاهز للإقلاع")
     return '', 200
 
 if __name__ == "__main__":
+    send_message("🚀 تم تشغيل صقر!")
     app.run(host="0.0.0.0", port=8080)
