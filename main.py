@@ -1,16 +1,14 @@
 import os
-import requests
 from flask import Flask, request
+import requests
 
 BOT_TOKEN = os.getenv("BOT_TOKEN") or "8108480049:AAGNBsq-LTMWVlJyUiBk2PKj8e7fJfChL_E"
-BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 app = Flask(__name__)
+BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 def send_message(chat_id, text):
-    url = f"{BASE_URL}/sendMessage"
-    data = {"chat_id": chat_id, "text": text}
-    requests.post(url, data=data)
+    requests.post(f"{BASE_URL}/sendMessage", data={"chat_id": chat_id, "text": text})
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -19,14 +17,13 @@ def webhook():
 
     if "message" in data:
         chat_id = data["message"]["chat"]["id"]
-        text = data["message"].get("text", "")
+        message_text = data["message"].get("text", "")
+        
+        # الرد تلقائياً على أي رسالة
+        reply = f"👋 أهلاً! وصلتني رسالتك: {message_text}"
+        send_message(chat_id, reply)
 
-        if "شو عم تعمل" in text:
-            send_message(chat_id, "🚀 بوت صقر شغّال وعم يراقب العملات 🔍")
-        elif "اختبر" in text or "test" in text:
-            send_message(chat_id, "✅ تم الاستلام بنجاح من Webhook")
-
-    return "Received", 200
+    return "OK", 200
 
 @app.route("/")
 def home():
