@@ -14,11 +14,13 @@ r = redis.from_url(REDIS_URL)
 def send_message(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     try:
-        requests.post(url, data={"chat_id": CHAT_ID, "text": text})
+        response = requests.post(url, data={"chat_id": CHAT_ID, "text": text})
+        if not response.ok:
+            print("❌ Telegram Error:", response.text)
     except Exception as e:
-        print("❌ Error sending Telegram message:", e)
+        print("❌ Telegram Send Failed:", str(e))
 
-# الصفحة الرئيسية
+# الرد التلقائي عند التشغيل
 @app.route("/")
 def home():
     return "Saqr is watching 👁️", 200
@@ -27,8 +29,9 @@ def home():
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
-        data = request.get_json()
+        data = request.get_json(force=True)
         if not data or "message" not in data:
+            print("⚠️ Received data without 'message':", data)
             return "", 200
 
         text = data["message"].get("text", "").strip().upper()
@@ -39,12 +42,14 @@ def webhook():
             send_message(f"📡 تم إرسال {text} إلى توتو للشراء ✅")
         else:
             send_message("✋ لساتني صاحي وبراقب السوق يا ورد 😎")
+
+        return "", 200
+
     except Exception as e:
-        print("❌ Error in webhook:", e)
+        print("💥 Error in /webhook:", str(e))
+        return "Internal Server Error", 500
 
-    return "", 200
-
-# تشغيل السيرفر عند استدعاء gunicorn
+# تشغيل السيرفر
 if __name__ == "__main__":
     send_message("🦅 صقر اشتغل وبراقب السوق!")
     app.run(host="0.0.0.0", port=8080)
