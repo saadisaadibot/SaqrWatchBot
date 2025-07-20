@@ -4,27 +4,29 @@ import requests
 
 app = Flask(__name__)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")  # اختياري لو بدك ترد لشخص محدد
-BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # حط التوكن بمتغيرات Railway
+BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-@app.route("/webhook", methods=["POST"])
+@app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
-    if data and "message" in data:
-        message = data["message"]
-        chat_id = message["chat"]["id"]
-        text = message.get("text", "")
+    
+    if not data or "message" not in data:
+        return "No message", 200
 
-        if "شو عم تعمل" in text:
-            send_message(chat_id, "عم راقب السوق يا غالي 🔍")
+    message = data["message"]
+    chat_id = message["chat"]["id"]
+    text = message.get("text", "")
 
-    return "OK"
+    print("📥 رسالة وصلت من:", message.get("from", {}).get("username", "مجهول"))
+    print("📢 Chat ID:", chat_id)
+    print("📝 الرسالة:", text)
 
-def send_message(chat_id, text):
-    url = f"{BASE_URL}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text}
-    requests.post(url, data=payload)
+    if "شو عم تعمل" in text:
+        reply = "عم راقب السوق يا ورد 😎"
+        requests.post(BASE_URL, data={"chat_id": chat_id, "text": reply})
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    return "OK", 200
+
+if __name__ == '__main__':
+    app.run(host="0.0.0.0", port=8000)
