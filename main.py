@@ -1,33 +1,40 @@
-import os
 from flask import Flask, request
+import os
 import requests
 
-BOT_TOKEN = os.getenv("BOT_TOKEN") or "8108480049:AAGNBsq-LTMWVlJyUiBk2PKj8e7fJfChL_E"
-
 app = Flask(__name__)
-BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-def send_message(chat_id, text):
-    requests.post(f"{BASE_URL}/sendMessage", data={"chat_id": chat_id, "text": text})
+# إعدادات التوكن والشات
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    data = request.get_json(force=True)
-    print("📬 Webhook received:", data)
-
-    if "message" in data:
-        chat_id = data["message"]["chat"]["id"]
-        message_text = data["message"].get("text", "")
-        
-        # الرد تلقائياً على أي رسالة
-        reply = f"👋 أهلاً! وصلتني رسالتك: {message_text}"
-        send_message(chat_id, reply)
-
-    return "OK", 200
+# دالة إرسال رسالة تيليغرام (اختياري)
+def send_message(text):
+    if BOT_TOKEN and CHAT_ID:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        data = {"chat_id": CHAT_ID, "text": text}
+        try:
+            requests.post(url, data=data)
+        except Exception as e:
+            print("❌ Error sending message:", e)
 
 @app.route("/")
 def home():
     return "✅ SaqrWatchBot is running"
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    try:
+        data = request.get_json(force=True)
+        print("📬 Webhook received:", data)
+
+        # رد تجريبي على أي رسالة (اختياري)
+        send_message("📡 تم استلام الإشارة من صقر!")
+
+        return "Received ✅", 200
+    except Exception as e:
+        print("❌ Webhook error:", e)
+        return "Error", 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
