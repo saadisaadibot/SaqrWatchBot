@@ -34,43 +34,57 @@ def load_bitvavo_symbols():
     try:
         res = requests.get("https://api.bitvavo.com/v2/markets")
         if res.status_code == 200:
-            return set(entry["market"].split("-")[0].lower() for entry in res.json())
-    except:
-        pass
+            return set(
+                entry["market"].split("-")[0].lower()
+                for entry in res.json()
+                if entry["market"].endswith("-EUR")
+            )
+    except Exception as e:
+        print("❌ فشل تحميل عملات Bitvavo:", e)
     return set()
 
 # ========== اختيار العملات ==========
 def get_top_4_gainers():
-    coins = cg.get_coins_markets(vs_currency="eur", per_page=250, page=1)
-    results = []
-    for coin in coins:
-        if coin["symbol"] in bitvavo_coins and coin.get("price_change_percentage_1h_in_currency") is not None:
-            change_5m = coin["price_change_percentage_1h_in_currency"] / 12
-            results.append({
-                "symbol": coin["symbol"].upper(),
-                "id": coin["id"],
-                "change": change_5m
-            })
-    results = sorted(results, key=lambda x: x["change"], reverse=True)
-    return results[:4]
+    try:
+        coins = cg.get_coins_markets(vs_currency="eur", per_page=250, page=1)
+        results = []
+        for coin in coins:
+            if coin["symbol"] in bitvavo_coins and coin.get("price_change_percentage_1h_in_currency") is not None:
+                change_5m = coin["price_change_percentage_1h_in_currency"] / 12
+                results.append({
+                    "symbol": coin["symbol"].upper(),
+                    "id": coin["id"],
+                    "change": change_5m
+                })
+        results = sorted(results, key=lambda x: x["change"], reverse=True)
+        print("🔍 Top gainers:", [c["symbol"] for c in results[:4]])
+        return results[:4]
+    except Exception as e:
+        print("❌ خطأ أثناء جلب بيانات CoinGecko:", e)
+        return []
 
 # ========== مراقبة العملة ==========
 def monitor_coin(symbol, initial_price):
     start_time = datetime.now()
     r.set(f"monitoring:{symbol}", start_time.isoformat(), ex=300)
+    print(f"👁️ بدء مراقبة {symbol} عند سعر {initial_price}")
     try:
         while (datetime.now() - start_time).total_seconds() < 300:
             price = cg.get_price(ids=symbol.lower(), vs_currencies="eur")[symbol.lower()]["eur"]
-            if (price - initial_price) / initial_price >= 0.015:
+            pct = (price - initial_price) / initial_price
+            print(f"📈 {symbol}: {price:.4f} ({pct * 100:.2f}%)")
+            if pct >= 0.015:
                 send_message(f"🚨 اشترِ {symbol} الآن! ارتفعت بنسبة +1.5% خلال المراقبة.")
                 break
             time.sleep(60)
-    except:
-        pass
+    except Exception as e:
+        print(f"❌ خطأ أثناء مراقبة {symbol}:", e)
     r.delete(f"monitoring:{symbol}")
 
 # ========== المسح كل 5 دقائق ==========
 def scan_and_monitor():
+    print("🌀 بدء المسح التلقائي")
+    first_run = True
     while True:
         try:
             top_coins = get_top_4_gainers()
@@ -81,8 +95,14 @@ def scan_and_monitor():
                 price = cg.get_price(ids=coin["id"], vs_currencies="eur")[coin["id"]]["eur"]
                 threading.Thread(target=monitor_coin, args=(symbol, price)).start()
         except Exception as e:
-            print("❌ خطأ أثناء الفحص:", e)
-        time.sleep(300)
+            print("❌ خطأ أثناء المسح:", e)
+
+        # تشغيل فوري لأول مرة
+        if first_run:
+            first_run = False
+            time.sleep(5)
+        else:
+            time.sleep(300)
 
 # ========== Webhook ==========
 @app.route("/", methods=["POST"])
@@ -116,6 +136,7 @@ def home():
 def start_bot():
     global bitvavo_coins
     bitvavo_coins = load_bitvavo_symbols()
+    print("✅ رموز Bitvavo المحصورة بـ EUR:", bitvavo_coins)
     send_message("✅ البوت اشتغل بنجاح!")
     threading.Thread(target=scan_and_monitor).start()
 
