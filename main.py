@@ -1,31 +1,30 @@
 import os
-import requests
 from flask import Flask, request
+import requests
 
 app = Flask(__name__)
 
-BOT_TOKEN = os.getenv("SAQR_BOT_TOKEN")
-CHAT_ID = os.getenv("SAQR_CHAT_ID")
-
-def send_message(text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": CHAT_ID, "text": text})
-
-@app.route("/")
-def home():
-    return "Saqr is flying 🦅", 200
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")  # اختياري لو بدك ترد لشخص محدد
+BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.get_json()
-    if not data or "message" not in data:
-        return '', 200
+    if data and "message" in data:
+        message = data["message"]
+        chat_id = message["chat"]["id"]
+        text = message.get("text", "")
 
-    msg = data["message"].get("text", "")
-    if "صقر" in msg:
-        send_message("🦅 حاضر يا باشا! أنا صقر وجاهز للإقلاع")
-    return '', 200
+        if "شو عم تعمل" in text:
+            send_message(chat_id, "عم راقب السوق يا غالي 🔍")
+
+    return "OK"
+
+def send_message(chat_id, text):
+    url = f"{BASE_URL}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text}
+    requests.post(url, data=payload)
 
 if __name__ == "__main__":
-    send_message("🚀 تم تشغيل صقر!")
-    app.run(host="0.0.0.0", port=8080)
+    app.run(host="0.0.0.0", port=5000)
