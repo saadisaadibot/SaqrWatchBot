@@ -47,7 +47,11 @@ def check_movement():
     now = datetime.utcnow()
     for symbol_b, data_b in all_watch.items():
         symbol = symbol_b.decode()
-        data = json.loads(data_b.decode())
+        try:
+            data = json.loads(data_b.decode())
+        except json.JSONDecodeError:
+            r.hdel("watching", symbol)
+            continue
         entry = data["entry"]
         price = get_price(symbol)
         if not price: continue
