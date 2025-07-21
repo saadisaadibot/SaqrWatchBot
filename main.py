@@ -70,7 +70,7 @@ def top_green(tickers):
         try:
             pct = float(t["priceChangePercentage"])
             vol = float(t["volume"])
-            if pct > 0.5 and vol > 5000:
+            if pct > 0.5 and vol > 3000:
                 result.append((t["market"], pct))
         except:
             continue
@@ -82,7 +82,7 @@ def top_red(tickers):
         try:
             pct = float(t["priceChangePercentage"])
             vol = float(t["volume"])
-            if pct <= -10 and vol > 5000:
+            if pct <= -10 and vol > 3000:
                 result.append((t["market"], pct))
         except:
             continue
