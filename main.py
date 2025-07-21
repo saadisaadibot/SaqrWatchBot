@@ -110,7 +110,7 @@ def monitor_loop():
 
             except Exception as e:
                 print(f"❌ {symbol} failed: {e}")
-        time.sleep(60)
+        time.sleep(180)
 
 # === فحص العملات المراقبة
 def watch_checker():
