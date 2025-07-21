@@ -42,7 +42,7 @@ def get_symbols():
 
 def get_ticker(symbol):
     try:
-        url = f"https://api.bitvavo.com/v2/{symbol}/ticker/24h"
+        url = f"https://api.bitvavo.com/v2/ticker/24h?market={symbol}"
         res = requests.get(url, timeout=10)
 
         if res.status_code != 200:
