@@ -17,7 +17,7 @@ BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 TOTO_WEBHOOK = "https://totozaghnot-production.up.railway.app/webhook"
 r = redis.from_url(REDIS_URL)
 
-# === إرسال تيليغرام
+# === إرسال رسالة تيليغرام
 def send_message(msg):
     try:
         requests.post(f"{BASE_URL}/sendMessage", data={"chat_id": CHAT_ID, "text": msg})
@@ -26,22 +26,22 @@ def send_message(msg):
 
 # === إرسال أمر الشراء لتوتو
 def send_buy_to_toto(symbol):
+    msg = f"اشتري {symbol} يا توتو"
     try:
-        msg = f"اشتري {symbol} يا توتو"
         requests.post(TOTO_WEBHOOK, json={"message": {"text": msg}})
-        send_message(f"📤 كوكو أعطى الإشارة:\n{msg}")
+        send_message(f"📤 {msg}")
     except Exception as e:
         print(f"❌ فشل إرسال الأمر إلى توتو: {e}")
 
-# === جلب رموز -EUR من Bitvavo
+# === جلب كل رموز -EUR
 def get_symbols():
     try:
         res = requests.get("https://api.bitvavo.com/v2/markets")
-        return [item["market"] for item in res.json() if item["market"].endswith("-EUR")]
+        return [m["market"] for m in res.json() if m["market"].endswith("-EUR")]
     except:
         return []
 
-# === جلب بيانات السوق للعملة
+# === جلب بيانات السوق
 def get_ticker(symbol):
     try:
         url = f"https://api.bitvavo.com/v2/ticker/24h?market={symbol}"
@@ -56,51 +56,37 @@ def get_ticker(symbol):
     except:
         return None
 
-# === تخزين البيانات
+# === تخزين التاريخ
 def store_data(symbol, data):
     key = f"history:{symbol}"
     r.lpush(key, json.dumps(data))
     r.ltrim(key, 0, 20)
     r.incr(f"counter:{symbol.split('-')[0]}", amount=1)
 
-# === تحليل سلوك السوق
+# === تحليل سريع
 def analyze(symbol):
-    key = f"history:{symbol}"
-    raw = r.lrange(key, 0, 5)
+    raw = r.lrange(f"history:{symbol}", 0, 5)
     if len(raw) < 4:
         return None
-
     entries = [json.loads(x.decode()) for x in raw]
     prices = [e["price"] for e in entries]
     volumes = [e["volume"] for e in entries]
+    p_now, p1, p2, p3 = prices[0], prices[1], prices[2], prices[3]
 
-    price_now = prices[0]
-    price_3m_ago = prices[3]
-    price_2m_ago = prices[2]
-    price_1m_ago = prices[1]
-
-    growth_3m = ((price_now - price_3m_ago) / price_3m_ago) * 100
-    if growth_3m >= 2:
-        return f"🚀 {symbol} صعد {growth_3m:.2f}% خلال 3 دقائق!"
-
-    growth_1m = ((price_now - price_1m_ago) / price_1m_ago) * 100
-    if growth_1m >= 0.8:
-        return f"📈 {symbol} ارتفع {growth_1m:.2f}% خلال دقيقة!"
-
-    if price_now > price_1m_ago > price_2m_ago > price_3m_ago:
-        return f"🟩 3 شمعات خضراء متتالية في {symbol}"
-
-    vol_now = volumes[0]
-    vol_1m_ago = volumes[1]
-    if vol_now > vol_1m_ago * 1.5:
-        return f"💥 تضخم مفاجئ بالحجم في {symbol}"
-
+    if ((p_now - p3) / p3) * 100 >= 2:
+        return "🚀 صعود 2% خلال 3 دقائق"
+    if ((p_now - p1) / p1) * 100 >= 0.8:
+        return "📈 صعود 0.8% بدقيقة"
+    if p_now > p1 > p2 > p3:
+        return "🟩 3 شمعات خضراء"
+    if volumes[0] > volumes[1] * 1.5:
+        return "💥 تضخم بالحجم"
     return None
 
-# === بدء المراقبة الذكية
+# === المراقبة الذكية
 def monitor_loop():
     symbols = get_symbols()
-    send_message(f"🤖 كوكو بدأ مراقبة {len(symbols)} عملة 🔍")
+    send_message(f"🤖 كوكو يراقب {len(symbols)} عملة 🔍")
 
     while True:
         for symbol in symbols:
@@ -108,28 +94,51 @@ def monitor_loop():
                 data = get_ticker(symbol)
                 if not data:
                     continue
-
                 store_data(symbol, data)
+
+                # لا تحليل إذا العملة تحت المراقبة حاليًا
+                if r.exists(f"watch:{symbol}"):
+                    continue
+
                 signal = analyze(symbol)
-
-                # مرحلة الإشارة
-                if signal and not r.exists(f"watching:{symbol}"):
-                    send_message(f"📡 مراقبة بدأت: {symbol}\n{signal}")
-                    r.set(f"watching:{symbol}", data["price"])
-                    r.expire(f"watching:{symbol}", 900)
-
-                # مرحلة التأكيد بعد 15 دقيقة
-                elif r.exists(f"watching:{symbol}"):
-                    entry = float(r.get(f"watching:{symbol}"))
-                    change = ((data["price"] - entry) / entry) * 100
-                    if change >= 2:
-                        r.delete(f"watching:{symbol}")
-                        coin = symbol.split("-")[0].upper()
-                        send_message(f"✅ تأكيد الصعود {symbol} بنسبة {change:.2f}% بعد 15 دقيقة.")
-                        send_buy_to_toto(coin)
+                if signal:
+                    # راقب العملة سرًا لـ15 دقيقة
+                    r.hset("watching", symbol, datetime.utcnow().isoformat())
+                    r.set(f"entry:{symbol}", data["price"])
+                    r.expire(f"watching:{symbol}", 1000)
+                    print(f"🕵️‍♂️ بدأنا نراقب {symbol}: {signal}")
 
             except Exception as e:
-                print(f"❌ {symbol}: {e}")
+                print(f"❌ {symbol} failed: {e}")
+        time.sleep(60)
+
+# === فحص العملات المراقبة
+def watch_checker():
+    while True:
+        try:
+            watching = r.hgetall("watching")
+            now = datetime.utcnow()
+
+            for symbol_b, start_time_b in watching.items():
+                symbol = symbol_b.decode()
+                start_time = datetime.fromisoformat(start_time_b.decode())
+                minutes_passed = (now - start_time).total_seconds() // 60
+
+                if minutes_passed >= 15:
+                    entry = float(r.get(f"entry:{symbol}") or 0)
+                    current = get_ticker(symbol)
+                    if not current:
+                        continue
+                    change = ((current["price"] - entry) / entry) * 100
+                    coin = symbol.split("-")[0].upper()
+                    if change >= 2:
+                        send_buy_to_toto(coin)
+                    r.hdel("watching", symbol)
+                    r.delete(f"entry:{symbol}")
+
+        except Exception as e:
+            print("❌ watch_checker error:", str(e))
+
         time.sleep(60)
 
 # === Webhook تيليغرام
@@ -144,15 +153,15 @@ def webhook():
             return "ok"
 
         if text == "شو عم تعمل":
-            keys = r.keys("watching:*")
-            now = datetime.utcnow()
+            watching = r.hgetall("watching")
             lines = []
-            for key in keys:
-                sym = key.decode().split(":")[1]
-                start_price = r.get(key).decode()
-                lines.append(f"• {sym} تحت المراقبة بسعر أولي {start_price} EUR")
-
-            msg = "👀 العملات تحت المراقبة:\n" + "\n".join(lines) if lines else "🚫 لا عملات الآن"
+            now = datetime.utcnow()
+            for symbol_b, time_b in watching.items():
+                symbol = symbol_b.decode()
+                t = datetime.fromisoformat(time_b.decode())
+                mins = int((now - t).total_seconds() // 60)
+                lines.append(f"• تتم مراقبة {symbol.split('-')[0]}، باقي {15 - mins} دقيقة")
+            msg = "\n".join(lines) if lines else "🚫 لا عملات تحت المراقبة"
             send_message(msg)
 
         elif text == "الملخص":
@@ -167,10 +176,11 @@ def webhook():
 def home():
     return "🚀 Koko is alive", 200
 
-# === بدء التشغيل
+# === التشغيل
 def start():
-    send_message("✅ كوكو بدأ التشغيل... استعد يا توتو! 😎")
+    send_message("✅ كوكو بدأ التشغيل... استعد يا توتو!")
     threading.Thread(target=monitor_loop).start()
+    threading.Thread(target=watch_checker).start()
 
 if __name__ == "__main__":
     start()
