@@ -43,16 +43,36 @@ def get_symbols():
 def get_ticker(symbol):
     try:
         url = f"https://api.bitvavo.com/v2/{symbol}/ticker/24h"
-        res = requests.get(url)
-        data = res.json()
+        res = requests.get(url, timeout=10)
+
+        if res.status_code != 200:
+            print(f"❌ {symbol}: استجابة غير ناجحة - {res.status_code}")
+            return None
+
+        if not res.text.strip():
+            print(f"❌ {symbol}: الرد فارغ (Empty response)")
+            return None
+
+        try:
+            data = res.json()
+        except json.JSONDecodeError:
+            print(f"❌ {symbol}: الرد ليس JSON صالح - محتوى الرد:\n{res.text}")
+            return None
+
+        if "last" not in data or "volume" not in data:
+            print(f"⚠️ {symbol}: ناقص بيانات 'last' أو 'volume'")
+            return None
+
+        print(f"✅ {symbol}: السعر = {data['last']}، الحجم = {data['volume']}")
         return {
             "symbol": symbol,
             "price": float(data["last"]),
             "volume": float(data["volume"]),
             "time": datetime.utcnow().isoformat()
         }
+
     except Exception as e:
-        print(f"❌ فشل جلب بيانات {symbol}: {e}")
+        print(f"❌ {symbol}: استثناء - {e}")
         return None
 
 def store_data(symbol, data):
