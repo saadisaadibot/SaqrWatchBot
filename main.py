@@ -136,8 +136,10 @@ def webhook():
             send_message(msg)
 
         elif "امسح الذاكرة" in text:
-            r.delete("watching")
-            send_message("🧹 تم مسح المراقبة وإعادة التشغيل.")
+    keys = r.keys("*")
+    for key in keys:
+        r.delete(key)
+    send_message("🧹 تم مسح كل الذاكرة وإعادة التشغيل.")
 
     return "ok"
 
