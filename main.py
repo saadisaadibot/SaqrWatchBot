@@ -12,6 +12,9 @@ PORT = int(os.getenv("PORT", 5000))
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 r = redis.from_url(REDIS_URL)
 
+watch_duration = 60  # مدة المراقبة بالدقائق
+check_interval = 30  # فترة التحقق بالثواني
+
 def send_message(msg):
     try:
         requests.post(f"{BASE_URL}/sendMessage", data={"chat_id": CHAT_ID, "text": msg})
@@ -25,9 +28,14 @@ def send_buy_to_toto(symbol):
 
 def get_all_tickers():
     try:
-        url = "https://api.bitvavo.com/v2/ticker/24h"
-        return requests.get(url).json()
+        return requests.get("https://api.bitvavo.com/v2/ticker/24h").json()
     except: return []
+
+def get_price(symbol):
+    try:
+        url = f"https://api.bitvavo.com/v2/ticker/price?market={symbol}"
+        return float(requests.get(url).json()["price"])
+    except: return None
 
 def monitor(symbol, kind):
     r.hset("watching", symbol, json.dumps({
@@ -36,12 +44,6 @@ def monitor(symbol, kind):
         "entry": get_price(symbol)
     }))
 
-def get_price(symbol):
-    try:
-        res = requests.get(f"https://api.bitvavo.com/v2/ticker/price?market={symbol}")
-        return float(res.json()["price"])
-    except: return None
-
 def check_movement():
     all_watch = r.hgetall("watching")
     now = datetime.utcnow()
@@ -49,9 +51,8 @@ def check_movement():
         symbol = symbol_b.decode()
         try:
             data = json.loads(data_b.decode())
-        except json.JSONDecodeError:
-            r.hdel("watching", symbol)
-            continue
+        except: r.hdel("watching", symbol); continue
+
         entry = data["entry"]
         price = get_price(symbol)
         if not price: continue
@@ -61,55 +62,50 @@ def check_movement():
         if change >= 2:
             send_buy_to_toto(symbol.split("-")[0].upper())
             r.hdel("watching", symbol)
-        elif minutes >= 60:
+        elif minutes >= watch_duration:
             r.hdel("watching", symbol)
 
-def top_green(tickers):
+def filter_green(tickers):
     result = []
     for t in tickers:
         try:
-            pct = float(t["priceChangePercentage"])
-            vol = float(t["volume"])
-            if pct > 0.5 and vol > 3000:
-                result.append((t["market"], pct))
-        except:
-            continue
-    return sorted(result, key=lambda x: -x[1])  # ما في [:7]
+            if float(t["priceChangePercentage"]) > 0.5 and float(t["volume"]) > 3000:
+                result.append(t["market"])
+        except: continue
+    return result
 
-def top_red(tickers):
+def filter_red(tickers):
     result = []
     for t in tickers:
         try:
-            pct = float(t["priceChangePercentage"])
-            vol = float(t["volume"])
-            if pct <= -10 and vol > 3000:
-                result.append((t["market"], pct))
-        except:
-            continue
-    return sorted(result, key=lambda x: x[1])  # ما في [:7]
+            if float(t["priceChangePercentage"]) <= -10 and float(t["volume"]) > 3000:
+                result.append(t["market"])
+        except: continue
+    return result
 
-def green_loop():
+def green_collector_loop():
     while True:
         tickers = get_all_tickers()
-        top = top_green(tickers)
-        for symbol, _ in top:
+        greens = filter_green(tickers)
+        for symbol in greens:
             if not r.hexists("watching", symbol):
                 monitor(symbol, "green")
-        time.sleep(300)
+        time.sleep(900)  # كل 15 دقيقة
 
-def red_loop():
+def red_collector_loop():
+    time.sleep(300)  # تأخير 5 دقائق عند البداية
     while True:
         tickers = get_all_tickers()
-        top = top_red(tickers)
-        for symbol, _ in top:
+        reds = filter_red(tickers)
+        for symbol in reds:
             if not r.hexists("watching", symbol):
                 monitor(symbol, "red")
-        time.sleep(600)
+        time.sleep(900)  # كل 15 دقيقة
 
 def checker_loop():
     while True:
         check_movement()
-        time.sleep(30)
+        time.sleep(check_interval)
 
 @app.route("/", methods=["POST"])
 def webhook():
@@ -121,16 +117,13 @@ def webhook():
             return "ok"
 
         if "شو عم تعمل" in text:
-            w = r.hgetall("watching")
             now = datetime.utcnow()
             greens, reds = [], []
-            for symbol_b, info_b in w.items():
+            for symbol_b, info_b in r.hgetall("watching").items():
                 symbol = symbol_b.decode()
                 info = json.loads(info_b.decode())
-                t = datetime.fromisoformat(info["start"])
-                rem = int(60 - (now - t).total_seconds() // 60)
-                name = f"{symbol.split('-')[0]}"
-                line = f"• تتم مراقبة {name}، باقي {rem} دقيقة"
+                rem = int(watch_duration - (now - datetime.fromisoformat(info["start"])).total_seconds() / 60)
+                line = f"• تتم مراقبة {symbol.split('-')[0]}, باقي {rem} دقيقة"
                 if info["kind"] == "green": greens.append(line)
                 else: reds.append(line)
             msg = "🟩 العملات القوية:\n" + "\n".join(greens) if greens else "🟩 لا شيء"
@@ -138,19 +131,19 @@ def webhook():
             send_message(msg)
 
         elif "امسح الذاكرة" in text:
-            keys = r.keys("*")
-            for key in keys:
-                r.delete(key)
+            for key in r.keys("*"): r.delete(key)
             send_message("🧹 تم مسح الذاكرة وإعادة التشغيل.")
+
     return "ok"
 
 @app.route("/", methods=["GET"])
-def home(): return "👁️ عين كوكو تعمل", 200
+def home():
+    return "👁️ EyE.KoKo تعمل", 200
 
 def start():
-    send_message("🚀 تم تشغيل عين كوكو المطوّرة...")
-    threading.Thread(target=green_loop).start()
-    threading.Thread(target=red_loop).start()
+    send_message("🚀 تم تشغيل EyE.KoKo الذكي...")
+    threading.Thread(target=green_collector_loop).start()
+    threading.Thread(target=red_collector_loop).start()
     threading.Thread(target=checker_loop).start()
 
 if __name__ == "__main__":
