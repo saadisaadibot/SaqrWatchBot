@@ -69,7 +69,11 @@ def filter_green(tickers):
     result = []
     for t in tickers:
         try:
-            if float(t["priceChangePercentage"]) > 0.5 and float(t["volume"]) > 3000:
+            open_price = float(t["open"])
+            last_price = float(t["last"])
+            pct = ((last_price - open_price) / open_price) * 100
+            vol = float(t["volume"])
+            if pct > 0.5 and vol > 3000:
                 result.append(t["market"])
         except: continue
     return result
@@ -78,7 +82,11 @@ def filter_red(tickers):
     result = []
     for t in tickers:
         try:
-            if float(t["priceChangePercentage"]) <= -10 and float(t["volume"]) > 3000:
+            open_price = float(t["open"])
+            last_price = float(t["last"])
+            pct = ((last_price - open_price) / open_price) * 100
+            vol = float(t["volume"])
+            if pct <= -10 and vol > 3000:
                 result.append(t["market"])
         except: continue
     return result
