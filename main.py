@@ -2,11 +2,12 @@ import os
 import time
 import json
 import requests
+import redis
 from datetime import datetime
 from flask import Flask, request
-import redis
 import threading
 
+# إعداد التطبيق
 app = Flask(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
@@ -16,19 +17,15 @@ BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 TOTO_WEBHOOK = "https://totozaghnot-production.up.railway.app/webhook"
 r = redis.from_url(REDIS_URL)
 
-def send_message(msg):
-    try:
-        requests.post(f"{BASE_URL}/sendMessage", data={"chat_id": CHAT_ID, "text": msg})
-    except:
-        pass
-
+# إرسال رسالة لتوتو فقط
 def send_buy_to_toto(symbol):
     msg = f"اشتري {symbol} يا توتو"
     try:
         requests.post(TOTO_WEBHOOK, json={"message": {"text": msg}})
-    except Exception as e:
-        print(f"❌ فشل الإرسال إلى توتو: {e}")
+    except:
+        pass
 
+# جلب كل رموز EUR
 def get_symbols():
     try:
         res = requests.get("https://api.bitvavo.com/v2/markets")
@@ -36,6 +33,7 @@ def get_symbols():
     except:
         return []
 
+# جلب بيانات السوق
 def get_ticker(symbol):
     try:
         url = f"https://api.bitvavo.com/v2/ticker/24h?market={symbol}"
@@ -44,24 +42,28 @@ def get_ticker(symbol):
         return {
             "price": float(data["last"]),
             "volume": float(data["volume"]),
+            "symbol": symbol,
             "time": datetime.utcnow().isoformat()
         }
     except:
         return None
 
-def store_data(symbol, data):
-    key = f"history:{symbol}"
+# حفظ التاريخ
+def store(symbol, data):
+    key = f"hist:{symbol}"
     r.lpush(key, json.dumps(data))
-    r.ltrim(key, 0, 5)
+    r.ltrim(key, 0, 3)
 
-def detect_3_green_candles(symbol):
-    raw = r.lrange(f"history:{symbol}", 0, 3)
+# تحليل إشارات 3 شمعات خضراء فقط
+def is_three_green(symbol):
+    raw = r.lrange(f"hist:{symbol}", 0, 3)
     if len(raw) < 3:
         return False
     entries = [json.loads(x.decode()) for x in raw]
     prices = [e["price"] for e in entries]
     return prices[0] > prices[1] > prices[2]
 
+# المراقبة
 def monitor_loop():
     while True:
         symbols = get_symbols()
@@ -70,49 +72,45 @@ def monitor_loop():
                 data = get_ticker(symbol)
                 if not data:
                     continue
-                store_data(symbol, data)
-
+                store(symbol, data)
                 if r.hexists("watching", symbol):
                     continue
-
-                if detect_3_green_candles(symbol):
+                if is_three_green(symbol):
                     r.hset("watching", symbol, datetime.utcnow().isoformat())
                     r.set(f"entry:{symbol}", data["price"])
-                    print(f"🕵️‍♂️ مراقبة {symbol} بدأت بعد 3 شمعات خضراء")
+            except:
+                continue
+        time.sleep(180)  # كل 3 دقائق
 
-            except Exception as e:
-                print(f"❌ {symbol} failed: {e}")
-        time.sleep(180)
-
+# التحقق من الشراء
 def watch_checker():
     while True:
         try:
-            watching = r.hgetall("watching")
             now = datetime.utcnow()
-
+            watching = r.hgetall("watching")
             for symbol_b, time_b in watching.items():
                 symbol = symbol_b.decode()
-                t = datetime.fromisoformat(time_b.decode())
-                minutes = (now - t).total_seconds() / 60
-
+                t0 = datetime.fromisoformat(time_b.decode())
+                mins = (now - t0).total_seconds() / 60
                 entry = float(r.get(f"entry:{symbol}") or 0)
                 current = get_ticker(symbol)
                 if not current:
                     continue
-
-                change = ((current["price"] - entry) / entry) * 100
+                price_now = current["price"]
+                change = ((price_now - entry) / entry) * 100
+                coin = symbol.split("-")[0].upper()
                 if change >= 2:
-                    send_buy_to_toto(symbol.split("-")[0].upper())
+                    send_buy_to_toto(coin)
                     r.hdel("watching", symbol)
                     r.delete(f"entry:{symbol}")
-                elif minutes >= 15:
+                elif mins >= 15:
                     r.hdel("watching", symbol)
                     r.delete(f"entry:{symbol}")
-
-        except Exception as e:
-            print("❌ watch_checker error:", str(e))
+        except:
+            pass
         time.sleep(60)
 
+# Webhook
 @app.route("/", methods=["POST"])
 def webhook():
     data = request.get_json()
@@ -123,23 +121,26 @@ def webhook():
             return "ok"
 
         if text == "شو عم تعمل":
-            watching = r.hgetall("watching")
-            now = datetime.utcnow()
             lines = []
-            for symbol_b, t_b in watching.items():
+            now = datetime.utcnow()
+            watching = r.hgetall("watching")
+            for symbol_b, time_b in watching.items():
                 symbol = symbol_b.decode()
-                t = datetime.fromisoformat(t_b.decode())
-                mins = int((now - t).total_seconds() // 60)
-                lines.append(f"• تتم مراقبة {symbol.split('-')[0]}، باقي {15 - mins} دقيقة")
+                t0 = datetime.fromisoformat(time_b.decode())
+                left = 15 - int((now - t0).total_seconds() // 60)
+                lines.append(f"• تتم مراقبة {symbol.split('-')[0]}، باقي {left} دقيقة")
             msg = "\n".join(lines) if lines else "🚫 لا عملات تحت المراقبة"
-            send_message(msg)
-
+            try:
+                requests.post(f"{BASE_URL}/sendMessage", data={"chat_id": CHAT_ID, "text": msg})
+            except:
+                pass
     return "ok"
 
 @app.route("/", methods=["GET"])
 def home():
-    return "🚀 Koko is alive", 200
+    return "✅ Koko يعمل بهدوء", 200
 
+# بدء التشغيل
 def start():
     threading.Thread(target=monitor_loop).start()
     threading.Thread(target=watch_checker).start()
