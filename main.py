@@ -71,10 +71,10 @@ def top_green(tickers):
             pct = float(t["priceChangePercentage"])
             vol = float(t["volume"])
             if pct > 0.5 and vol > 5000:
-                result.append((t["market"], pct))  # ← تم تعديل المسافة هنا
+                result.append((t["market"], pct))
         except:
             continue
-    return sorted(result, key=lambda x: -x[1])[:7]
+    return sorted(result, key=lambda x: -x[1])  # ما في [:7]
 
 def top_red(tickers):
     result = []
@@ -83,10 +83,10 @@ def top_red(tickers):
             pct = float(t["priceChangePercentage"])
             vol = float(t["volume"])
             if pct <= -10 and vol > 5000:
-                result.append((t["market"], pct))  # ← وتم التعديل هنا كمان
+                result.append((t["market"], pct))
         except:
             continue
-    return sorted(result, key=lambda x: x[1])[:7]
+    return sorted(result, key=lambda x: x[1])  # ما في [:7]
 
 def green_loop():
     while True:
