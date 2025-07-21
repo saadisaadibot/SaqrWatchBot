@@ -2,7 +2,7 @@ import os
 import time
 import json
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 from flask import Flask, request
 import redis
 import threading
@@ -14,14 +14,24 @@ CHAT_ID = os.getenv("CHAT_ID")
 REDIS_URL = os.getenv("REDIS_URL")
 PORT = int(os.getenv("PORT", 5000))
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
+TOTO_WEBHOOK = "https://totozaghnot-production.up.railway.app/webhook"
 r = redis.from_url(REDIS_URL)
 
-# === الإرسال إلى تيليغرام ===
+# === إرسال تيليغرام ===
 def send_message(msg):
     try:
         requests.post(f"{BASE_URL}/sendMessage", data={"chat_id": CHAT_ID, "text": msg})
     except:
         pass
+
+# === إرسال أمر الشراء إلى توتو ===
+def send_buy_to_toto(symbol):
+    try:
+        msg = f"اشتري {symbol} يا توتو"
+        requests.post(TOTO_WEBHOOK, json={"message": {"text": msg}})
+        send_message(f"📤 تم إرسال أمر شراء {symbol} إلى توتو.")
+    except Exception as e:
+        print(f"❌ فشل إرسال الأمر إلى توتو: {e}")
 
 # === جلب رموز EUR من Bitvavo ===
 def get_symbols():
@@ -31,7 +41,7 @@ def get_symbols():
     except:
         return []
 
-# === جلب بيانات العملة ===
+# === جلب بيانات عملة ===
 def get_ticker(symbol):
     try:
         url = f"https://api.bitvavo.com/v2/{symbol}/ticker/24h"
@@ -46,13 +56,14 @@ def get_ticker(symbol):
     except:
         return None
 
-# === تخزين البيانات الزمنية لكل عملة ===
+# === تخزين بيانات آخر 20 دقيقة لكل عملة ===
 def store_data(symbol, data):
     key = f"history:{symbol}"
     r.lpush(key, json.dumps(data))
     r.ltrim(key, 0, 20)
+    r.incr(f"counter:{symbol.split('-')[0]}", amount=1)
 
-# === التحليل الذكي على نمط صقر ===
+# === التحليل الذكي على نمط صقر x توتو ===
 def analyze(symbol):
     key = f"history:{symbol}"
     raw = r.lrange(key, 0, 5)
@@ -63,43 +74,60 @@ def analyze(symbol):
     prices = [e["price"] for e in entries]
     volumes = [e["volume"] for e in entries]
 
-    # إشارة ارتداد بعد هبوط
-    change = ((prices[0] - prices[-1]) / prices[-1]) * 100
-    stable = max(prices[-3:]) - min(prices[-3:]) < 0.003
-    vol_jump = (volumes[0] - volumes[-1]) / volumes[-1] * 100 if volumes[-1] else 0
+    price_now = prices[0]
+    price_3m_ago = prices[3]
+    price_2m_ago = prices[2]
+    price_1m_ago = prices[1]
 
-    if change > 5 and stable and vol_jump > 10:
-        return f"📉 إشارة من صقر:\nعملة {symbol} هبطت {change:.2f}٪ ثم استقرت.\nحجم التداول ارتفع {vol_jump:.2f}٪.\nقد يبدأ الارتداد الآن."
+    # صعود مستمر 2% خلال 3 دقائق
+    growth_3m = ((price_now - price_3m_ago) / price_3m_ago) * 100
+    if growth_3m >= 2:
+        return f"🚀 {symbol} صعد {growth_3m:.2f}% خلال 3 دقائق!"
 
-    # إشارة انفجار صعود مفاجئ
-    growth = ((prices[0] - prices[3]) / prices[3]) * 100
-    if growth >= 5:
-        return f"🚀 توتو يوصي:\nعملة {symbol} صعدت {growth:.2f}٪ خلال 3 دقائق!\nاحتمال استمرار الصعود."
+    # صعود > 0.8% خلال دقيقة
+    growth_1m = ((price_now - price_1m_ago) / price_1m_ago) * 100
+    if growth_1m >= 0.8:
+        return f"📈 {symbol} ارتفع {growth_1m:.2f}% خلال دقيقة!"
+
+    # 3 شمعات خضراء (صعود كل دقيقة)
+    if price_now > price_1m_ago > price_2m_ago > price_3m_ago:
+        return f"🟩 3 شمعات خضراء متتالية في {symbol}"
+
+    # تضخم بالحجم
+    vol_now = volumes[0]
+    vol_1m_ago = volumes[1]
+    if vol_now > vol_1m_ago * 1.5:
+        return f"💥 تضخم مفاجئ بالحجم في {symbol}"
 
     return None
 
-# === فحص شامل كل دقيقة ===
+# === فحص السوق كل دقيقة ===
 def monitor_loop():
     symbols = get_symbols()
-    send_message(f"🚀 بدأ المسح الذكي على {len(symbols)} عملة...")
+    send_message(f"🤖 كوكو بدأ مراقبة {len(symbols)} عملة...")
 
     while True:
-        signals = []
         for symbol in symbols:
-            data = get_ticker(symbol)
-            if data:
+            try:
+                data = get_ticker(symbol)
+                if not data:
+                    continue
+
                 store_data(symbol, data)
                 signal = analyze(symbol)
-                if signal:
-                    signals.append(signal)
-        if signals:
-            for s in signals:
-                send_message(s)
-        else:
-            print(datetime.utcnow().strftime("%H:%M:%S"), "- لا إشارات حالياً.")
+
+                # إرسال إشعار وتنفيذ أمر شراء
+                if signal and not r.exists(f"alerted:{symbol}"):
+                    r.set(f"alerted:{symbol}", "1", ex=900)
+                    coin = symbol.split("-")[0].upper()
+                    send_message(signal)
+                    send_buy_to_toto(coin)
+
+            except Exception as e:
+                print(f"❌ {symbol}: {e}")
         time.sleep(60)
 
-# === Webhook للتفاعل مع البوت ===
+# === Webhook للتفاعل اليدوي ===
 @app.route("/", methods=["POST"])
 def webhook():
     data = request.get_json()
@@ -111,28 +139,36 @@ def webhook():
             return "ok"
 
         if text == "شو عم تعمل":
-            active = r.keys("history:*")
-            msg = f"📊 تتم المراقبة على {len(active)} عملة حالياً."
+            keys = r.keys("history:*")
+            lines = []
+            now = datetime.utcnow()
+            for key in keys:
+                sym = key.decode().split(":")[1]
+                last_raw = r.lindex(key, 0)
+                if not last_raw:
+                    continue
+                last = json.loads(last_raw.decode())
+                minutes = int((now - datetime.fromisoformat(last["time"])).total_seconds() // 60)
+                lines.append(f"• {sym} منذ {minutes} دقيقة *{r.get(f'counter:{sym.split('-')[0]}').decode()}")
+
+            msg = "👀 تتم مراقبة:\n" + "\n".join(lines) if lines else "🚫 لا توجد عملات تحت المراقبة"
             send_message(msg)
 
         elif text == "الملخص":
-            counters = r.keys("history:*")
-            msg = "📁 الملخص:\n"
-            for key in counters:
-                sym = key.decode().split(":")[1]
-                count = r.llen(key)
-                msg += f"{sym} = {count} سجل\n"
+            keys = r.keys("counter:*")
+            lines = [f"{k.decode().split(':')[1]} = {int(r.get(k))} مرة" for k in keys]
+            msg = "📊 عدد مرات المراقبة:\n" + "\n".join(lines) if lines else "🚫 لا يوجد أي سجل."
             send_message(msg)
 
     return "ok"
 
 @app.route("/", methods=["GET"])
 def home():
-    return "Bot is running 🚀", 200
+    return "Koko is alive 🚀", 200
 
-# === تشغيل البوت ===
+# === بدء التشغيل ===
 def start():
-    send_message("🧠 توتو الهجين بدأ التشغيل!\nكل دقيقة يتم تحليل السوق...")
+    send_message("✅ كوكو بدأ التشغيل... استعد يا توتو! 😎")
     threading.Thread(target=monitor_loop).start()
 
 if __name__ == "__main__":
