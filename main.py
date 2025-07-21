@@ -136,11 +136,10 @@ def webhook():
             send_message(msg)
 
         elif "امسح الذاكرة" in text:
-    keys = r.keys("*")
-    for key in keys:
-        r.delete(key)
-    send_message("🧹 تم مسح كل الذاكرة وإعادة التشغيل.")
-
+            keys = r.keys("*")
+            for key in keys:
+                r.delete(key)
+            send_message("🧹 تم مسح الذاكرة وإعادة التشغيل.")
     return "ok"
 
 @app.route("/", methods=["GET"])
