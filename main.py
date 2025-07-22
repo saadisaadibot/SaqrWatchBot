@@ -14,21 +14,28 @@ PORT = int(os.getenv("PORT", 5000))
 TOTO_WEBHOOK = "https://totozaghnot-production.up.railway.app/webhook"
 r = redis.from_url(REDIS_URL)
 
+# توقيتات
 COLLECTION_INTERVAL = 180
 MONITOR_DURATION = 30
 MONITOR_INTERVAL = 30
 
+# إرسال رسالة تيليغرام
 def send_message(msg):
     try:
         requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": msg})
     except: pass
 
-def send_buy_to_toto(symbol):
-    msg = f"🚀 اشتري {symbol} يا كوكو"
+# إرسال إشارة شراء لتوتو (مع ذكر الاستراتيجية)
+def send_buy_to_toto(symbol, source="INTEL"):
+    if source == "NEW":
+        msg = f"🍼 عملة جديدة: اشتري {symbol} يا كوكو (NEW)"
+    else:
+        msg = f"🚀 اشتري {symbol} يا كوكو (INTEL)"
     try:
         requests.post(TOTO_WEBHOOK, json={"message": {"text": msg}})
     except: pass
 
+# طلب API موقع Bitvavo
 def bitvavo_request(path):
     timestamp = str(int(time.time() * 1000))
     method = "GET"
@@ -46,10 +53,12 @@ def bitvavo_request(path):
     except:
         return []
 
+# شموع آخر 3 دقائق
 def get_last_3m_candles(symbol):
     path = f"/v2/market/{symbol}/candles?interval=1m&limit=3"
     return bitvavo_request(path)
 
+# السعر الحالي
 def get_price(symbol):
     try:
         url = f"https://api.bitvavo.com/v2/ticker/price?market={symbol}"
@@ -57,6 +66,7 @@ def get_price(symbol):
     except:
         return None
 
+# دالة السكور الذكي
 def compute_score(candles):
     if len(candles) < 3:
         return 0
@@ -69,6 +79,7 @@ def compute_score(candles):
     except:
         return 0
 
+# بدء المراقبة
 def monitor(symbol):
     price = get_price(symbol)
     if not price or price < 0.005:
@@ -77,6 +88,7 @@ def monitor(symbol):
         "start": datetime.utcnow().isoformat()
     }))
 
+# فحص العملات تحت المراقبة
 def watch_checker():
     while True:
         now = datetime.utcnow()
@@ -102,7 +114,7 @@ def watch_checker():
                     continue
                 diff = ((current_price - old_price) / old_price) * 100
                 if diff >= 1.5:
-                    send_buy_to_toto(symbol.split("-")[0])
+                    send_buy_to_toto(symbol.split("-")[0], source="INTEL")
                     send_message(f"🚨 إشارة شراء لـ {symbol.split('-')[0]} - ارتفعت {diff:.2f}% خلال دقائق")
                     r.hdel("watching", symbol)
                     found_signal = True
@@ -115,6 +127,7 @@ def watch_checker():
                 r.hdel("watching", symbol)
         time.sleep(MONITOR_INTERVAL)
 
+# اختيار أذكى 100 عملة
 def collect_top_100():
     tickers = bitvavo_request("/v2/ticker/price")
     candidates = []
@@ -137,11 +150,13 @@ def collect_top_100():
     for symbol, score in top:
         monitor(symbol)
 
+# جدولة المراقبة كل نصف ساعة
 def scheduler():
     while True:
         collect_top_100()
         time.sleep(1800)
 
+# أمر "شو عم تعمل؟"
 @app.route("/", methods=["POST"])
 def webhook():
     data = request.get_json()
