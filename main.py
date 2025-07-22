@@ -103,7 +103,6 @@ def collector():
                     continue
                 open_price = float(t["open"])
                 last_price = float(t["last"])
-                change = ((last_price - open_price) / open_price) * 100
                 if vol >= 5000:
                     monitor(symbol)
             except:
