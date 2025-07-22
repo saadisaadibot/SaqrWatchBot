@@ -80,7 +80,7 @@ def filter_red(tickers):
         try:
             pct = float(t["priceChange24h"])
             vol = float(t["volume"])
-            if pct <= -7 and vol >= 5000:
+            if pct <= -7 and vol >= 3000:
                 result.append(t["market"])
         except: continue
     return result
