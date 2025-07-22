@@ -1,114 +1,118 @@
-import os, time, json, requests
-from datetime import datetime, timedelta
+import os
+import time
+import json
+import requests
+from datetime import datetime
 from flask import Flask, request
-import redis, threading
+import redis
+import threading
 
-# إعداد البيئة
 app = Flask(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 REDIS_URL = os.getenv("REDIS_URL")
-TOTO_WEBHOOK = "https://totozaghnot-production.up.railway.app/webhook"
 PORT = int(os.getenv("PORT", 5000))
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
+TOTO_WEBHOOK = "https://totozaghnot-production.up.railway.app/webhook"
 r = redis.from_url(REDIS_URL)
 
-# إعدادات أساسية
-watch_duration = 180  # دقائق (ساعتين)
-check_interval = 30   # ثواني
-
-# إرسال رسالة تيليغرام
 def send_message(msg):
     try:
         requests.post(f"{BASE_URL}/sendMessage", data={"chat_id": CHAT_ID, "text": msg})
-    except: pass
+    except:
+        pass
 
-# إرسال أمر شراء لتوتو
 def send_buy_to_toto(symbol):
     msg = f"اشتري {symbol} يا توتو"
     try:
         requests.post(TOTO_WEBHOOK, json={"message": {"text": msg}})
-    except: pass
+    except Exception as e:
+        print(f"❌ فشل الإرسال إلى توتو: {e}")
 
-# جلب كل العملات
-def get_all_tickers():
+def get_symbols():
     try:
-        return requests.get("https://api.bitvavo.com/v2/ticker/24h").json()
-    except: return []
+        res = requests.get("https://api.bitvavo.com/v2/markets")
+        return [m["market"] for m in res.json() if m["market"].endswith("-EUR")]
+    except:
+        return []
 
-# جلب السعر الحالي
-def get_price(symbol):
+def get_ticker(symbol):
     try:
-        url = f"https://api.bitvavo.com/v2/ticker/price?market={symbol}"
-        return float(requests.get(url).json()["price"])
-    except: return None
+        url = f"https://api.bitvavo.com/v2/ticker/24h?market={symbol}"
+        res = requests.get(url)
+        data = res.json()
+        return {
+            "price": float(data["last"]),
+            "volume": float(data["volume"]),
+            "time": datetime.utcnow().isoformat()
+        }
+    except:
+        return None
 
-# بدء مراقبة عملة
-def monitor(symbol, kind):
-    r.hset("watching", symbol, json.dumps({
-        "start": datetime.utcnow().isoformat(),
-        "kind": kind,
-        "entry": get_price(symbol)
-    }))
+def store_data(symbol, data):
+    key = f"history:{symbol}"
+    r.lpush(key, json.dumps(data))
+    r.ltrim(key, 0, 5)
 
-# تحقق من التغيير السعري
-def check_movement():
-    all_watch = r.hgetall("watching")
-    now = datetime.utcnow()
-    for symbol_b, data_b in all_watch.items():
-        symbol = symbol_b.decode()
-        try:
-            data = json.loads(data_b.decode())
-        except: r.hdel("watching", symbol); continue
+def detect_3_green_candles(symbol):
+    raw = r.lrange(f"history:{symbol}", 0, 3)
+    if len(raw) < 3:
+        return False
+    entries = [json.loads(x.decode()) for x in raw]
+    prices = [e["price"] for e in entries]
+    return prices[0] > prices[1] > prices[2]
 
-        entry = data["entry"]
-        price = get_price(symbol)
-        if not price: continue
-        change = ((price - entry) / entry) * 100
-        minutes = (now - datetime.fromisoformat(data["start"])).total_seconds() / 60
-
-        if change >= 2:
-            send_buy_to_toto(symbol.split("-")[0].upper())
-            r.hdel("watching", symbol)
-        elif minutes >= watch_duration:
-            r.hdel("watching", symbol)
-
-# فلترة العملات المنهارة -7٪ وvol ≥ 5000
-def filter_red(tickers):
-    result = []
-    for t in tickers:
-        try:
-            pct = float(t["priceChange24h"])
-            vol = float(t["volume"])
-            if pct <= -5 and vol >= 5000:
-                result.append(t["market"])
-        except: continue
-    return result
-
-# جمع العملات المنهارة + القائمة الذهبية
-def red_collector_loop():
-    time.sleep(10)  # مهلة بسيطة للبداية
+def monitor_loop():
     while True:
-        tickers = get_all_tickers()
-        reds = filter_red(tickers)
+        symbols = get_symbols()
+        for symbol in symbols:
+            try:
+                data = get_ticker(symbol)
+                if not data:
+                    continue
+                store_data(symbol, data)
 
-        # القائمة الذهبية
-        gold = [s.decode() for s in r.smembers("manual_watchlist")]
-        all_targets = list(set(reds + gold))
+                if r.hexists("watching", symbol):
+                    continue
 
-        for symbol in all_targets:
-            if not r.hexists("watching", symbol):
-                monitor(symbol, "red")
+                if detect_3_green_candles(symbol):
+                    r.hset("watching", symbol, datetime.utcnow().isoformat())
+                    r.set(f"entry:{symbol}", data["price"])
+                    print(f"🕵️‍♂️ مراقبة {symbol} بدأت بعد 3 شمعات خضراء")
 
-        time.sleep(900)  # كل 15 دقيقة
+            except Exception as e:
+                print(f"❌ {symbol} failed: {e}")
+        time.sleep(180)
 
-# التحقق الدوري من الحركة السعرية
-def checker_loop():
+def watch_checker():
     while True:
-        check_movement()
-        time.sleep(check_interval)
+        try:
+            watching = r.hgetall("watching")
+            now = datetime.utcnow()
 
-# تيليغرام - أوامر المستخدم
+            for symbol_b, time_b in watching.items():
+                symbol = symbol_b.decode()
+                t = datetime.fromisoformat(time_b.decode())
+                minutes = (now - t).total_seconds() / 60
+
+                entry = float(r.get(f"entry:{symbol}") or 0)
+                current = get_ticker(symbol)
+                if not current:
+                    continue
+
+                change = ((current["price"] - entry) / entry) * 100
+                if change >= 2:
+                    send_buy_to_toto(symbol.split("-")[0].upper())
+                    r.hdel("watching", symbol)
+                    r.delete(f"entry:{symbol}")
+                elif minutes >= 15:
+                    r.hdel("watching", symbol)
+                    r.delete(f"entry:{symbol}")
+
+        except Exception as e:
+            print("❌ watch_checker error:", str(e))
+        time.sleep(60)
+
 @app.route("/", methods=["POST"])
 def webhook():
     data = request.get_json()
@@ -118,43 +122,27 @@ def webhook():
         if chat_id != CHAT_ID:
             return "ok"
 
-        if "شو عم تعمل" in text:
-            now = datetime.utcnow()
+        if text == "شو عم تعمل":
             watching = r.hgetall("watching")
+            now = datetime.utcnow()
             lines = []
-            for symbol_b, info_b in watching.items():
+            for symbol_b, t_b in watching.items():
                 symbol = symbol_b.decode()
-                info = json.loads(info_b.decode())
-                rem = int(watch_duration - (now - datetime.fromisoformat(info["start"])).total_seconds() / 60)
-                lines.append(f"• تتم مراقبة {symbol.split('-')[0]}, باقي {rem} دقيقة")
-            msg = "🔍 العملات تحت المراقبة:\n" + ("\n".join(lines) if lines else "لا شيء حاليًا")
+                t = datetime.fromisoformat(t_b.decode())
+                mins = int((now - t).total_seconds() // 60)
+                lines.append(f"• تتم مراقبة {symbol.split('-')[0]}، باقي {15 - mins} دقيقة")
+            msg = "\n".join(lines) if lines else "🚫 لا عملات تحت المراقبة"
             send_message(msg)
-
-        elif text.startswith("اضف "):
-            parts = text.split()
-            if len(parts) >= 3:
-                coin = parts[1].upper()
-                full_symbol = f"{coin}-EUR"
-                r.sadd("manual_watchlist", full_symbol)
-                send_message(f"✨ تمت إضافة {coin} إلى القائمة الذهبية.")
-                if not r.hexists("watching", full_symbol):
-                    monitor(full_symbol, "gold")
-
-        elif "امسح الذاكرة" in text:
-            for key in r.keys("*"):
-                r.delete(key)
-            send_message("🧹 تم مسح الذاكرة وإعادة التشغيل.")
 
     return "ok"
 
 @app.route("/", methods=["GET"])
 def home():
-    return "👁️ EyE.KoKo تعمل", 200
+    return "🚀 Koko is alive", 200
 
 def start():
-    send_message("🚀 تم تشغيل EyE.KoKo الذكي...")
-    threading.Thread(target=red_collector_loop).start()
-    threading.Thread(target=checker_loop).start()
+    threading.Thread(target=monitor_loop).start()
+    threading.Thread(target=watch_checker).start()
 
 if __name__ == "__main__":
     start()
