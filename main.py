@@ -13,14 +13,13 @@ PORT = int(os.getenv("PORT", 5000))
 TOTO_WEBHOOK = "https://totozaghnot-production.up.railway.app/webhook"
 r = redis.from_url(REDIS_URL)
 
+COLLECTION_INTERVAL = 1800  # كل 30 دقيقة
 MONITOR_DURATION = 15
 MONITOR_INTERVAL = 30
-REFRESH_INTERVAL = 1800  # كل 30 دقيقة إعادة تقييم
 
 def send_message(msg):
     try:
-        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                      data={"chat_id": CHAT_ID, "text": msg})
+        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": msg})
     except: pass
 
 def send_buy_to_toto(symbol):
@@ -29,14 +28,16 @@ def send_buy_to_toto(symbol):
         requests.post(TOTO_WEBHOOK, json={"message": {"text": msg}})
     except: pass
 
+# توقيع طلب Bitvavo
 def bitvavo_request(path):
-    ts = str(int(time.time() * 1000))
-    msg = ts + "GET" + path
-    sig = hmac.new(BITVAVO_API_SECRET.encode(), msg.encode(), hashlib.sha256).hexdigest()
+    timestamp = str(int(time.time() * 1000))
+    method = "GET"
+    msg = timestamp + method + path
+    signature = hmac.new(BITVAVO_API_SECRET.encode(), msg.encode(), hashlib.sha256).hexdigest()
     headers = {
         'Bitvavo-Access-Key': BITVAVO_API_KEY,
-        'Bitvavo-Access-Signature': sig,
-        'Bitvavo-Access-Timestamp': ts,
+        'Bitvavo-Access-Signature': signature,
+        'Bitvavo-Access-Timestamp': timestamp,
         'Bitvavo-Access-Window': '10000'
     }
     try:
@@ -45,41 +46,44 @@ def bitvavo_request(path):
     except:
         return []
 
-def get_candles(symbol):
+# بيانات آخر 3 شموع
+def get_last_3m_candles(symbol):
     return bitvavo_request(f"/v2/market/{symbol}/candles?interval=1m&limit=3")
 
+def get_price(symbol):
+    try:
+        url = f"https://api.bitvavo.com/v2/ticker/price?market={symbol}"
+        return float(requests.get(url).json()["price"])
+    except:
+        return None
+
+# التقييم الذكي للعملات
 def evaluate_symbol(symbol):
-    candles = get_candles(symbol)
-    if not candles or len(candles) < 2:
+    candles = get_last_3m_candles(symbol)
+    if not candles or len(candles) < 3:
         return 0
+
     score = 0
-    vols = []
-    bodies = []
-    for c in candles[:-1]:
-        o, h, l, close, vol = map(float, c)
-        vols.append(vol)
-        bodies.append(abs(close - o))
-
-    avg_vol = sum(vols) / len(vols) if vols else 0.0001
-    avg_body = sum(bodies) / len(bodies) if bodies else 0.0001
-
-    last = candles[-1]
-    o, h, l, close, vol = map(float, last)
-
-    if close > o * 1.003: score += 1  # momentum
-    if abs(close - o) > avg_body: score += 1  # candle body
-    if vol > avg_vol * 1.5: score += 1  # volume spike
-
+    vol_jump = False
+    prev_close = candles[0][4]
+    for i in range(1, len(candles)):
+        close = candles[i][4]
+        vol = candles[i][5]
+        if prev_close == 0:
+            continue
+        change = ((close - prev_close) / prev_close) * 100
+        if change > 0.4:
+            score += change
+        if vol > 1000:
+            score += 1
+        prev_close = close
     return score
 
-def monitor(symbol):
-    r.hset("watching", symbol, json.dumps({
-        "start": datetime.utcnow().isoformat()
-    }))
-
+# تحديث قائمة المراقبة
 def refresh_top_symbols():
+    r.delete("watching")
     tickers = bitvavo_request("/v2/ticker/price")
-    scores = []
+    candidates = []
     for t in tickers:
         try:
             symbol = t["market"]
@@ -88,15 +92,18 @@ def refresh_top_symbols():
                 continue
             score = evaluate_symbol(symbol)
             if score > 0:
-                scores.append((symbol, score))
+                candidates.append((symbol, score))
         except:
             continue
-    scores.sort(key=lambda x: x[1], reverse=True)
-    top = scores[:100]
-    r.delete("watching")
-    for sym, _ in top:
-        monitor(sym)
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    top = candidates[:100]
+    for symbol, score in top:
+        r.hset("watching", symbol, json.dumps({
+            "start": datetime.utcnow().isoformat(),
+            "score": score
+        }))
 
+# مراقبة العملات المختارة
 def watch_checker():
     while True:
         now = datetime.utcnow()
@@ -110,23 +117,30 @@ def watch_checker():
                 r.hdel("watching", symbol)
                 continue
 
-            candles = get_candles(symbol)
+            candles = get_last_3m_candles(symbol)
             if not candles or len(candles) < 2:
                 continue
-            current = float(candles[-1][4])
+            current_price = candles[-1][4]
             for c in candles[:-1]:
-                prev = float(c[4])
-                if prev == 0: continue
-                change = ((current - prev) / prev) * 100
-                if change >= 1.5:
+                prev_price = c[4]
+                if prev_price == 0:
+                    continue
+                diff = ((current_price - prev_price) / prev_price) * 100
+                if diff >= 1.5:
                     send_buy_to_toto(symbol.split("-")[0])
+                    send_message(f"🚀 انفجار {symbol.split('-')[0]} بنسبة {diff:.2f}% خلال دقائق")
                     r.hdel("watching", symbol)
                     break
 
-            minutes = (now - start).total_seconds() / 60
-            if minutes >= MONITOR_DURATION:
+            if (now - start).total_seconds() / 60 >= MONITOR_DURATION:
                 r.hdel("watching", symbol)
         time.sleep(MONITOR_INTERVAL)
+
+# التحديث الدوري كل 30 دقيقة
+def scheduler():
+    while True:
+        refresh_top_symbols()
+        time.sleep(COLLECTION_INTERVAL)
 
 @app.route("/", methods=["POST"])
 def webhook():
@@ -137,13 +151,13 @@ def webhook():
         if chat_id != CHAT_ID:
             return "ok"
         if "شو عم تعمل" in text:
-            now = datetime.utcnow()
             watching = r.hgetall("watching")
+            now = datetime.utcnow()
             lines = []
-            for i, (symbol_b, data_b) in enumerate(watching.items(), 1):
+            for i, (symbol_b, data_b) in enumerate(watching.items(), start=1):
                 symbol = symbol_b.decode()
                 data = json.loads(data_b.decode())
-                mins = int((now - datetime.fromisoformat(data["start"])).total_seconds() // 60)
+                mins = int((now - datetime.fromisoformat(data["start"])).total_seconds() / 60)
                 lines.append(f"{i}. {symbol.split('-')[0]} تحت المراقبة، باقي {MONITOR_DURATION - mins} دقيقة")
             msg = "\n".join(lines) if lines else "🚫 لا عملات تحت المراقبة حالياً"
             send_message(msg)
@@ -151,15 +165,11 @@ def webhook():
 
 @app.route("/", methods=["GET"])
 def home():
-    return "🤖 KOKO INTEL MODE™ جاهز للصيد", 200
-
-def scheduler():
-    while True:
-        refresh_top_symbols()
-        time.sleep(REFRESH_INTERVAL)
+    return "🧠 KOKO INTEL MODE™ يعمل بثقة مطلقة", 200
 
 def start():
     r.flushall()
+    send_message("🤖 تم تشغيل KOKO INTEL MODE™ - تمت تصفية الذاكرة والانطلاق ✅")
     threading.Thread(target=watch_checker).start()
     threading.Thread(target=scheduler).start()
 
