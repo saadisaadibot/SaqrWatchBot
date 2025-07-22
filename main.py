@@ -170,8 +170,9 @@ def home():
 def start():
     r.flushall()
     send_message("🤖 تم تشغيل KOKO INTEL MODE™ - تمت تصفية الذاكرة والانطلاق ✅")
-    threading.Thread(target=watch_checker).start()
-    threading.Thread(target=scheduler).start()
+    threading.Thread(target=collector).start()     # 🔥 يجمع العملات المرشحة
+    threading.Thread(target=watch_checker).start() # 👁️ يراقب تحركات الأسعار
+    threading.Thread(target=scheduler).start()      # 🔄 ينعش القائمة كل نصف ساعة
 
 if __name__ == "__main__":
     start()
