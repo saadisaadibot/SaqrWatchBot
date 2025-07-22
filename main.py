@@ -14,9 +14,9 @@ TOTO_WEBHOOK = "https://totozaghnot-production.up.railway.app/webhook"
 r = redis.from_url(REDIS_URL)
 
 # إعدادات التوقيت
-COLLECTION_INTERVAL = 180  # كل 3 دقائق
-MONITOR_DURATION = 15      # دقائق مراقبة
-MONITOR_INTERVAL = 30      # فحص كل 30 ثانية
+COLLECTION_INTERVAL = 180  # جمع العملات كل 3 دقائق
+MONITOR_DURATION = 15      # دقائق
+MONITOR_INTERVAL = 30      # تحقق من الصعود كل 30 ثانية
 
 # إرسال رسالة تيليغرام
 def send_message(msg):
@@ -93,13 +93,11 @@ def collector():
             try:
                 symbol = t["market"]
                 vol = float(t["volume"])
+                change = float(t.get("priceChangePercentage", 0))
                 if not symbol.endswith("-EUR"):
                     continue
                 if r.hexists("watching", symbol):
                     continue
-                open_price = float(t["open"])
-                last_price = float(t["last"])
-                change = ((last_price - open_price) / open_price) * 100
                 if vol >= 5000 and change >= 1.2:
                     monitor(symbol)
             except:
@@ -121,9 +119,14 @@ def webhook():
             lines = []
             for symbol_b, data_b in watching.items():
                 symbol = symbol_b.decode()
-                data = json.loads(data_b.decode())
-                mins = int((now - datetime.fromisoformat(data["start"])).total_seconds() // 60)
-                lines.append(f"• {symbol.split('-')[0]} تحت المراقبة، باقي {MONITOR_DURATION - mins} دقيقة")
+                try:
+                    data = json.loads(data_b.decode())
+                    start = datetime.fromisoformat(data["start"])
+                    mins = int((now - start).total_seconds() // 60)
+                    remaining = max(MONITOR_DURATION - mins, 0)
+                    lines.append(f"• {symbol.split('-')[0]} تحت المراقبة، باقي {remaining} دقيقة")
+                except:
+                    continue
             msg = "\n".join(lines) if lines else "🚫 لا عملات تحت المراقبة حالياً"
             send_message(msg)
     return "ok"
