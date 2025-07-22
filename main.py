@@ -130,7 +130,7 @@ def webhook():
             msg = "🔍 العملات تحت المراقبة:\n" + ("\n".join(lines) if lines else "لا شيء حاليًا")
             send_message(msg)
 
-        elif text.startswith("اضف "):
+elif text.startswith("اضف "):
     parts = text.split()
     if len(parts) >= 3:
         coin = parts[1].upper()
