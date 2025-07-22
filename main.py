@@ -3,7 +3,6 @@ from datetime import datetime
 from flask import Flask, request
 import redis, threading
 
-# إعداد بيئة التشغيل
 app = Flask(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
@@ -13,32 +12,27 @@ BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 TOTO_WEBHOOK = "https://totozaghnot-production.up.railway.app/webhook"
 r = redis.from_url(REDIS_URL)
 
-# إعدادات التوقيت
-COLLECTION_INTERVAL = 180  # كل 3 دقائق
-MONITOR_DURATION = 15      # دقائق مراقبة
-MONITOR_INTERVAL = 30      # فحص كل 30 ثانية
+COLLECTION_INTERVAL = 180
+MONITOR_DURATION = 15
+MONITOR_INTERVAL = 30
 
-# إرسال رسالة تيليغرام
 def send_message(msg):
     try:
         requests.post(f"{BASE_URL}/sendMessage", data={"chat_id": CHAT_ID, "text": msg})
     except: pass
 
-# إرسال إشارة شراء لتوتو
 def send_buy_to_toto(symbol):
     msg = f"اشتري {symbol} يا كوكو"
     try:
         requests.post(TOTO_WEBHOOK, json={"message": {"text": msg}})
     except: pass
 
-# جلب بيانات كل العملات
 def get_all_tickers():
     try:
         return requests.get("https://api.bitvavo.com/v2/ticker/24h").json()
     except:
         return []
 
-# جلب السعر الحالي لعملة
 def get_price(symbol):
     try:
         url = f"https://api.bitvavo.com/v2/ticker/price?market={symbol}"
@@ -46,17 +40,16 @@ def get_price(symbol):
     except:
         return None
 
-# بدء مراقبة عملة
 def monitor(symbol):
     entry = get_price(symbol)
     if not entry:
         return
     r.hset("watching", symbol, json.dumps({
         "start": datetime.utcnow().isoformat(),
-        "entry": entry
+        "entry": entry,
+        "prices": [{"price": entry, "time": datetime.utcnow().isoformat()}]
     }))
 
-# فحص العملات تحت المراقبة
 def watch_checker():
     while True:
         now = datetime.utcnow()
@@ -67,25 +60,36 @@ def watch_checker():
                 data = json.loads(data_b.decode())
                 start = datetime.fromisoformat(data["start"])
                 entry = data["entry"]
+                prices = data.get("prices", [])
             except:
                 r.hdel("watching", symbol)
                 continue
 
-            price = get_price(symbol)
-            if not price:
+            current_price = get_price(symbol)
+            if not current_price:
                 continue
 
-            change = ((price - entry) / entry) * 100
-            minutes = (now - start).total_seconds() / 60
+            # تحديث سجل الأسعار
+            prices.append({"price": current_price, "time": now.isoformat()})
+            prices = [p for p in prices if (now - datetime.fromisoformat(p["time"])).total_seconds() <= 120]
 
-            if change >= 2:
-                send_buy_to_toto(symbol.split("-")[0])
+            # فحص الارتفاع خلال دقيقة أو دقيقتين
+            for p in prices:
+                diff = ((current_price - p["price"]) / p["price"]) * 100
+                duration = (now - datetime.fromisoformat(p["time"])).total_seconds()
+                if diff >= 1.5 and duration <= 120:
+                    send_buy_to_toto(symbol.split("-")[0])
+                    r.hdel("watching", symbol)
+                    break
+
+            minutes = (now - start).total_seconds() / 60
+            if minutes >= MONITOR_DURATION:
                 r.hdel("watching", symbol)
-            elif minutes >= MONITOR_DURATION:
-                r.hdel("watching", symbol)
+            else:
+                data["prices"] = prices
+                r.hset("watching", symbol, json.dumps(data))
         time.sleep(MONITOR_INTERVAL)
 
-# جمع العملات المؤهلة كل 3 دقائق
 def collector():
     while True:
         tickers = get_all_tickers()
@@ -106,7 +110,6 @@ def collector():
                 continue
         time.sleep(COLLECTION_INTERVAL)
 
-# عرض العملات تحت المراقبة
 @app.route("/", methods=["POST"])
 def webhook():
     data = request.get_json()
@@ -128,13 +131,12 @@ def webhook():
             send_message(msg)
     return "ok"
 
-# نقطة الدخول
 @app.route("/", methods=["GET"])
 def home():
     return "🚀 كوكو الهجين يعمل بثقة...", 200
 
 def start():
-    r.flushall()  # تنظيف البيانات السابقة
+    r.flushall()
     send_message("🚀 تم تشغيل كوكو الهجين بثقة...")
     threading.Thread(target=collector).start()
     threading.Thread(target=watch_checker).start()
