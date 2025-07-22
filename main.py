@@ -131,11 +131,14 @@ def webhook():
             send_message(msg)
 
         elif text.startswith("اضف "):
-            parts = text.split()
-            if len(parts) >= 3:
-                coin = parts[1].upper()
-                r.sadd("manual_watchlist", f"{coin}-EUR")
-                send_message(f"✨ تمت إضافة {coin} إلى القائمة الذهبية.")
+    parts = text.split()
+    if len(parts) >= 3:
+        coin = parts[1].upper()
+        full_symbol = f"{coin}-EUR"
+        r.sadd("manual_watchlist", full_symbol)
+        send_message(f"✨ تمت إضافة {coin} إلى القائمة الذهبية.")
+        if not r.hexists("watching", full_symbol):
+            monitor(full_symbol, "gold")
 
         elif "امسح الذاكرة" in text:
             for key in r.keys("*"):
