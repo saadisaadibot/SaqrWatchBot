@@ -16,7 +16,7 @@ r = redis.from_url(REDIS_URL)
 # إعدادات زمنية
 monitor_duration = 30   # دقائق
 price_check_interval = 30  # ثانية
-scan_interval = 1800    # كل 30 دقيقة (جمع العملات)
+scan_interval = 60    # كل 30 دقيقة (جمع العملات)
 
 ### رسائل Telegram
 def send_message(msg):
