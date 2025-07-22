@@ -14,7 +14,7 @@ BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 r = redis.from_url(REDIS_URL)
 
 # إعدادات أساسية
-watch_duration = 120  # دقائق (ساعتين)
+watch_duration = 180  # دقائق (ساعتين)
 check_interval = 30   # ثواني
 
 # إرسال رسالة تيليغرام
