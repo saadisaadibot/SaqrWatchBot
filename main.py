@@ -3,6 +3,7 @@ from datetime import datetime
 from flask import Flask, request
 import redis, threading
 
+# إعداد بيئة التشغيل
 app = Flask(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
@@ -12,27 +13,32 @@ BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 TOTO_WEBHOOK = "https://totozaghnot-production.up.railway.app/webhook"
 r = redis.from_url(REDIS_URL)
 
+# إعدادات التوقيت
 COLLECTION_INTERVAL = 180  # كل 3 دقائق
-MONITOR_DURATION = 15      # بالدقائق
-MONITOR_INTERVAL = 30      # كل 30 ثانية
+MONITOR_DURATION = 15      # دقائق مراقبة
+MONITOR_INTERVAL = 30      # فحص كل 30 ثانية
 
+# إرسال رسالة تيليغرام
 def send_message(msg):
     try:
         requests.post(f"{BASE_URL}/sendMessage", data={"chat_id": CHAT_ID, "text": msg})
     except: pass
 
+# إرسال إشارة شراء لتوتو
 def send_buy_to_toto(symbol):
     msg = f"اشتري {symbol} يا كوكو"
     try:
         requests.post(TOTO_WEBHOOK, json={"message": {"text": msg}})
     except: pass
 
+# جلب بيانات كل العملات
 def get_all_tickers():
     try:
         return requests.get("https://api.bitvavo.com/v2/ticker/24h").json()
     except:
         return []
 
+# جلب السعر الحالي لعملة
 def get_price(symbol):
     try:
         url = f"https://api.bitvavo.com/v2/ticker/price?market={symbol}"
@@ -40,6 +46,7 @@ def get_price(symbol):
     except:
         return None
 
+# بدء مراقبة عملة
 def monitor(symbol):
     entry = get_price(symbol)
     if not entry:
@@ -49,6 +56,7 @@ def monitor(symbol):
         "entry": entry
     }))
 
+# فحص العملات تحت المراقبة
 def watch_checker():
     while True:
         now = datetime.utcnow()
@@ -68,15 +76,16 @@ def watch_checker():
                 continue
 
             change = ((price - entry) / entry) * 100
-            elapsed = (now - start).total_seconds()
+            minutes = (now - start).total_seconds() / 60
 
             if change >= 2:
                 send_buy_to_toto(symbol.split("-")[0])
                 r.hdel("watching", symbol)
-            elif elapsed >= MONITOR_DURATION * 60:
+            elif minutes >= MONITOR_DURATION:
                 r.hdel("watching", symbol)
         time.sleep(MONITOR_INTERVAL)
 
+# جمع العملات المؤهلة كل 3 دقائق
 def collector():
     while True:
         tickers = get_all_tickers()
@@ -84,17 +93,20 @@ def collector():
             try:
                 symbol = t["market"]
                 vol = float(t["volume"])
-                change = float(t.get("priceChangePercentage", 0))
                 if not symbol.endswith("-EUR"):
                     continue
                 if r.hexists("watching", symbol):
                     continue
+                open_price = float(t["open"])
+                last_price = float(t["last"])
+                change = ((last_price - open_price) / open_price) * 100
                 if vol >= 5000 and change >= 1.2:
                     monitor(symbol)
             except:
                 continue
         time.sleep(COLLECTION_INTERVAL)
 
+# عرض العملات تحت المراقبة
 @app.route("/", methods=["POST"])
 def webhook():
     data = request.get_json()
@@ -109,24 +121,20 @@ def webhook():
             lines = []
             for symbol_b, data_b in watching.items():
                 symbol = symbol_b.decode()
-                try:
-                    data = json.loads(data_b.decode())
-                    start = datetime.fromisoformat(data["start"])
-                    elapsed = (now - start).total_seconds()
-                    remaining = max(int(MONITOR_DURATION * 60 - elapsed) // 60, 0)
-                    lines.append(f"• {symbol.split('-')[0]} تحت المراقبة، باقي {remaining} دقيقة")
-                except:
-                    continue
+                data = json.loads(data_b.decode())
+                mins = int((now - datetime.fromisoformat(data["start"])).total_seconds() // 60)
+                lines.append(f"• {symbol.split('-')[0]} تحت المراقبة، باقي {MONITOR_DURATION - mins} دقيقة")
             msg = "\n".join(lines) if lines else "🚫 لا عملات تحت المراقبة حالياً"
             send_message(msg)
     return "ok"
 
+# نقطة الدخول
 @app.route("/", methods=["GET"])
 def home():
     return "🚀 كوكو الهجين يعمل بثقة...", 200
 
 def start():
-    r.flushall()
+    r.flushall()  # تنظيف البيانات السابقة
     send_message("🚀 تم تشغيل كوكو الهجين بثقة...")
     threading.Thread(target=collector).start()
     threading.Thread(target=watch_checker).start()
