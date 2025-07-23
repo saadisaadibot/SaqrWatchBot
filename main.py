@@ -85,8 +85,6 @@ def watch_checker():
     while True:
         now = datetime.utcnow()
         watching = r.hgetall("watching")
-        cold_coins = []
-
         for symbol_b, data_b in watching.items():
             symbol = symbol_b.decode()
             try:
@@ -96,12 +94,14 @@ def watch_checker():
                 r.hdel("watching", symbol)
                 continue
 
+            # نحدد الإشارة من البداية
+            found_signal = False
+
             candles = get_last_3m_candles(symbol)
             if not candles or len(candles) < 2:
                 continue
 
             current_price = candles[-1][4]
-            found_signal = False
             for c in candles[:-1]:
                 old_price = c[4]
                 if old_price == 0:
@@ -117,14 +117,8 @@ def watch_checker():
             minutes = (now - start).total_seconds() / 60
             if not found_signal and minutes >= 7:
                 r.hdel("watching", symbol)
-                cold_coins.append(symbol.split("-")[0])
             elif minutes >= MONITOR_DURATION:
                 r.hdel("watching", symbol)
-
-        if cold_coins:
-            msg = "🧊 العملات الباردة (تم استبعادها):\n" + "\n".join([f"• {coin}" for coin in cold_coins])
-            send_message(msg)
-
         time.sleep(MONITOR_INTERVAL)
 
 def collect_top_100():
