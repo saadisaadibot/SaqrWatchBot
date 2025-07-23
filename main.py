@@ -17,6 +17,8 @@ COLLECTION_INTERVAL = 180
 MONITOR_DURATION = 30
 MONITOR_INTERVAL = 30
 
+allowed_markets = set()
+
 def log_error(error_text):
     print("❌ ERROR:", error_text)
     traceback.print_exc()
@@ -54,11 +56,10 @@ def bitvavo_request(path):
         return []
 
 def get_last_3m_candles(symbol):
-    try:
-        candles = bitvavo_request(f"/v2/market/{symbol}/candles?interval=1m&limit=3")
-        if isinstance(candles, list):
-            return candles
+    if symbol not in allowed_markets:
         return []
+    try:
+        return bitvavo_request(f"/v2/market/{symbol}/candles?interval=1m&limit=3")
     except Exception as e:
         log_error(f"فشل في جلب الشموع لـ {symbol}: {e}")
         return []
@@ -140,7 +141,7 @@ def collect_top_100():
         for t in tickers:
             try:
                 symbol = t["market"]
-                if not symbol.endswith("-EUR"):
+                if not symbol.endswith("-EUR") or symbol not in allowed_markets:
                     continue
                 price = float(t["price"])
                 if price < 0.005 or r.hexists("watching", symbol):
@@ -150,12 +151,20 @@ def collect_top_100():
                 candidates.append((symbol, score))
             except Exception as e:
                 log_error(f"خطأ أثناء فحص {t}: {e}")
-
         top = sorted(candidates, key=lambda x: x[1], reverse=True)[:100]
         for symbol, score in top:
             monitor(symbol)
     except Exception as e:
         log_error(f"فشل جمع العملات: {e}")
+
+def fetch_allowed_markets():
+    try:
+        markets = bitvavo_request("/v2/markets")
+        for m in markets:
+            if m.get("market") and m.get("status") == "trading":
+                allowed_markets.add(m["market"])
+    except Exception as e:
+        log_error(f"فشل جلب الأسواق المتاحة: {e}")
 
 def scheduler():
     while True:
@@ -194,6 +203,7 @@ def home():
 def start():
     try:
         r.flushall()
+        fetch_allowed_markets()
         send_message("🤖 تم تشغيل KOKO INTEL MODE™ - تمت تصفية الذاكرة والانطلاق ✅")
         threading.Thread(target=scheduler).start()
         threading.Thread(target=watch_checker).start()
