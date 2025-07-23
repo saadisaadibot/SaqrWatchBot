@@ -13,10 +13,10 @@ PORT = int(os.getenv("PORT", 5000))
 TOTO_WEBHOOK = "https://totozaghnot-production.up.railway.app/webhook"
 r = redis.from_url(REDIS_URL)
 
+allowed_markets = set()
 COLLECTION_INTERVAL = 180
 MONITOR_DURATION = 30
 MONITOR_INTERVAL = 30
-allowed_markets = set()
 
 def log_error(error_text):
     print("❌ ERROR:", error_text)
@@ -55,17 +55,16 @@ def bitvavo_request(path):
         return []
 
 def update_allowed_markets():
+    global allowed_markets
     try:
         markets = bitvavo_request("/v2/markets")
-        for m in markets:
-            allowed_markets.add(m["market"])
+        allowed_markets = {m["market"] for m in markets if m.get("supportsCandles", False)}
         print(f"✅ تم تحديث قائمة الأسواق ({len(allowed_markets)} زوج)")
     except Exception as e:
-        log_error(f"فشل في تحديث الأسواق: {e}")
+        log_error("فشل تحديث قائمة الأسواق")
 
 def get_last_3m_candles(symbol):
     if symbol not in allowed_markets:
-        print(f"⛔️ السوق غير مدعوم أو غير موجود: {symbol}")
         return []
     try:
         return bitvavo_request(f"/v2/market/{symbol}/candles?interval=1m&limit=3")
@@ -150,7 +149,7 @@ def collect_top_100():
         for t in tickers:
             try:
                 symbol = t["market"]
-                if not symbol.endswith("-EUR"):
+                if not symbol.endswith("-EUR") or symbol not in allowed_markets:
                     continue
                 price = float(t["price"])
                 if price < 0.005 or r.hexists("watching", symbol):
@@ -160,6 +159,7 @@ def collect_top_100():
                 candidates.append((symbol, score))
             except Exception as e:
                 log_error(f"خطأ أثناء فحص {t}: {e}")
+
         top = sorted(candidates, key=lambda x: x[1], reverse=True)[:100]
         for symbol, score in top:
             monitor(symbol)
