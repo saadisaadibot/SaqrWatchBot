@@ -16,7 +16,6 @@ r = redis.from_url(REDIS_URL)
 COLLECTION_INTERVAL = 180
 MONITOR_DURATION = 30
 MONITOR_INTERVAL = 30
-
 allowed_markets = set()
 
 def log_error(error_text):
@@ -55,8 +54,18 @@ def bitvavo_request(path):
         log_error(f"فشل طلب Bitvavo: {e}")
         return []
 
+def update_allowed_markets():
+    global allowed_markets
+    try:
+        tickers = bitvavo_request("/v2/ticker/price")
+        allowed_markets = set(t["market"] for t in tickers if t["market"].endswith("-EUR"))
+        print(f"✅ تم تحديث قائمة الأسواق ({len(allowed_markets)} زوج)")
+    except Exception as e:
+        log_error(f"فشل تحديث الأسواق المتاحة: {e}")
+
 def get_last_3m_candles(symbol):
     if symbol not in allowed_markets:
+        log_error(f"⚠️ الرمز {symbol} غير مدعوم على Bitvavo.")
         return []
     try:
         return bitvavo_request(f"/v2/market/{symbol}/candles?interval=1m&limit=3")
@@ -141,7 +150,7 @@ def collect_top_100():
         for t in tickers:
             try:
                 symbol = t["market"]
-                if not symbol.endswith("-EUR") or symbol not in allowed_markets:
+                if not symbol.endswith("-EUR"):
                     continue
                 price = float(t["price"])
                 if price < 0.005 or r.hexists("watching", symbol):
@@ -151,23 +160,16 @@ def collect_top_100():
                 candidates.append((symbol, score))
             except Exception as e:
                 log_error(f"خطأ أثناء فحص {t}: {e}")
+
         top = sorted(candidates, key=lambda x: x[1], reverse=True)[:100]
         for symbol, score in top:
             monitor(symbol)
     except Exception as e:
         log_error(f"فشل جمع العملات: {e}")
 
-def fetch_allowed_markets():
-    try:
-        markets = bitvavo_request("/v2/markets")
-        for m in markets:
-            if m.get("market") and m.get("status") == "trading":
-                allowed_markets.add(m["market"])
-    except Exception as e:
-        log_error(f"فشل جلب الأسواق المتاحة: {e}")
-
 def scheduler():
     while True:
+        update_allowed_markets()
         collect_top_100()
         time.sleep(1800)
 
@@ -203,7 +205,7 @@ def home():
 def start():
     try:
         r.flushall()
-        fetch_allowed_markets()
+        update_allowed_markets()
         send_message("🤖 تم تشغيل KOKO INTEL MODE™ - تمت تصفية الذاكرة والانطلاق ✅")
         threading.Thread(target=scheduler).start()
         threading.Thread(target=watch_checker).start()
