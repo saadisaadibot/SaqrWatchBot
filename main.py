@@ -57,15 +57,15 @@ def bitvavo_request(path):
 def update_allowed_markets():
     global allowed_markets
     try:
-        tickers = bitvavo_request("/v2/ticker/price")
-        allowed_markets = set(t["market"] for t in tickers if t["market"].endswith("-EUR"))
+        markets = bitvavo_request("/v2/markets")
+        allowed_markets = set(m["market"] for m in markets if m["market"].endswith("-EUR"))
         print(f"✅ تم تحديث قائمة الأسواق ({len(allowed_markets)} زوج)")
     except Exception as e:
-        log_error(f"فشل تحديث الأسواق المتاحة: {e}")
+        log_error(f"فشل تحديث قائمة الأسواق: {e}")
+        allowed_markets = set()
 
 def get_last_3m_candles(symbol):
     if symbol not in allowed_markets:
-        log_error(f"⚠️ الرمز {symbol} غير مدعوم على Bitvavo.")
         return []
     try:
         return bitvavo_request(f"/v2/market/{symbol}/candles?interval=1m&limit=3")
@@ -144,13 +144,15 @@ def watch_checker():
         time.sleep(MONITOR_INTERVAL)
 
 def collect_top_100():
+    if not allowed_markets:
+        update_allowed_markets()
     try:
         tickers = bitvavo_request("/v2/ticker/price")
         candidates = []
         for t in tickers:
             try:
                 symbol = t["market"]
-                if not symbol.endswith("-EUR"):
+                if not symbol.endswith("-EUR") or symbol not in allowed_markets:
                     continue
                 price = float(t["price"])
                 if price < 0.005 or r.hexists("watching", symbol):
@@ -169,7 +171,6 @@ def collect_top_100():
 
 def scheduler():
     while True:
-        update_allowed_markets()
         collect_top_100()
         time.sleep(1800)
 
@@ -205,7 +206,7 @@ def home():
 def start():
     try:
         r.flushall()
-        update_allowed_markets()
+        update_allowed_markets()  # ✅ تحديث السوق قبل أي شيء
         send_message("🤖 تم تشغيل KOKO INTEL MODE™ - تمت تصفية الذاكرة والانطلاق ✅")
         threading.Thread(target=scheduler).start()
         threading.Thread(target=watch_checker).start()
