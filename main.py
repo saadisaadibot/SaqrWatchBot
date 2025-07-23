@@ -55,7 +55,10 @@ def bitvavo_request(path):
 
 def get_last_3m_candles(symbol):
     try:
-        return bitvavo_request(f"/v2/market/{symbol}/candles?interval=1m&limit=3")
+        candles = bitvavo_request(f"/v2/market/{symbol}/candles?interval=1m&limit=3")
+        if isinstance(candles, list):
+            return candles
+        return []
     except Exception as e:
         log_error(f"فشل في جلب الشموع لـ {symbol}: {e}")
         return []
