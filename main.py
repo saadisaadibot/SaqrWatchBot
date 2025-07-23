@@ -74,8 +74,9 @@ def main_loop():
         print("⛔ لا توجد أسواق متاحة حاليًا.")
         return
 
-    # فقط لاختبار أول عملة من السوق
-    for symbol in allowed_markets[:1]:
+    print(f"\n⏱️ بدء فحص السوق ({len(allowed_markets)} زوج)...\n")
+
+    for symbol in allowed_markets[:20]:  # <-- أول 20 عملة فقط للتجربة
         candles = get_last_3m_candles(symbol)
         if candles:
             print(f"✅ {symbol}: تم جلب الشموع بنجاح")
