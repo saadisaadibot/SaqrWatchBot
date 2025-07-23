@@ -1,13 +1,33 @@
 import os
-import json
+import requests
 import time
 import hmac
 import hashlib
-import requests
+import json
+import redis
+from datetime import datetime
+from flask import Flask, request
+from threading import Thread
 
+# إعداد
+app = Flask(__name__)
 BITVAVO_API_KEY = os.getenv("BITVAVO_API_KEY")
 BITVAVO_API_SECRET = os.getenv("BITVAVO_API_SECRET")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+REDIS_URL = os.getenv("REDIS_URL")
+r = redis.from_url(REDIS_URL)
 
+# إرسال رسالة إلى تيليغرام
+def send_message(text):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    requests.post(url, data={"chat_id": CHAT_ID, "text": text})
+
+# دالة طباعة الأخطاء
+def log_error(error):
+    print(f"❌ ERROR: {error}")
+
+# دالة طلب من Bitvavo
 def bitvavo_request(path):
     timestamp = str(int(time.time() * 1000))
     method = "GET"
@@ -19,32 +39,59 @@ def bitvavo_request(path):
         'Bitvavo-Access-Timestamp': timestamp,
         'Bitvavo-Access-Window': '10000'
     }
+
     try:
         response = requests.get("https://api.bitvavo.com" + path, headers=headers)
         response.raise_for_status()
         return response.json()
     except Exception as e:
-        print(f"❌ {path} => فشل: {e}")
+        log_error(f"فشل طلب Bitvavo: {e}")
         return []
 
-def get_markets():
-    raw = bitvavo_request("/v2/markets")
-    return [m["market"] for m in raw if m.get("status") == "trading"]
+# الحصول على قائمة الأسواق المتاحة
+def get_allowed_markets():
+    try:
+        markets = bitvavo_request("/v2/markets")
+        allowed = [m["market"] for m in markets if m.get("status") == "trading"]
+        print(f"✅ تم تحديث قائمة الأسواق ({len(allowed)} زوج)")
+        return allowed
+    except Exception as e:
+        log_error(f"فشل في جلب الأسواق: {e}")
+        return []
 
-def check_candle_support():
-    valid = []
-    all_markets = get_markets()
-    print(f"🔍 فحص {len(all_markets)} زوج...")
-    for market in all_markets:
-        data = bitvavo_request(f"/v2/market/{market}/candles?interval=1m&limit=1")
-        if data:
-            print(f"✅ {market} يدعم الشموع")
-            valid.append(market)
+# الحصول على آخر 3 شمعات
+def get_last_3m_candles(symbol):
+    try:
+        return bitvavo_request(f"/v2/markets/{symbol}/candles?interval=1m&limit=3")
+    except Exception as e:
+        log_error(f"{symbol} فشل في جلب الشموع لـ: {e}")
+        return []
+
+# نقطة البداية
+def main_loop():
+    allowed_markets = get_allowed_markets()
+    if not allowed_markets:
+        print("⛔ لا توجد أسواق متاحة حاليًا.")
+        return
+
+    # فقط لاختبار أول عملة من السوق
+    for symbol in allowed_markets[:1]:
+        candles = get_last_3m_candles(symbol)
+        if candles:
+            print(f"✅ {symbol}: تم جلب الشموع بنجاح")
         else:
-            print(f"❌ {market} لا يدعم الشموع")
-        time.sleep(0.1)  # لتجنب الحظر المؤقت
-    with open("valid_markets.json", "w") as f:
-        json.dump(valid, f)
-    print(f"✅ تم حفظ {len(valid)} سوق صالح في valid_markets.json")
+            print(f"❌ {symbol}: لا يوجد شموع")
 
-check_candle_support()
+@app.route("/")
+def home():
+    return "🤖 Koko Intel Mode is Running."
+
+# تشغيل البوت بخيط مستقل
+def start_bot():
+    send_message("🤖 تم تشغيل KOKO INTEL MODE - ™️ تمت ✅ تصفية الذاكرة والانطلاق")
+    r.flushall()
+    main_loop()
+
+if __name__ == "__main__":
+    Thread(target=start_bot).start()
+    app.run(host="0.0.0.0", port=8080)
