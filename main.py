@@ -19,13 +19,11 @@ COLLECTION_INTERVAL = 180
 MONITOR_DURATION = 30
 MONITOR_INTERVAL = 30
 
-# إرسال رسالة تيليغرام
 def send_message(msg):
     try:
         requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": msg})
     except: pass
 
-# إرسال إشارة شراء لتوتو (مع ذكر الاستراتيجية)
 def send_buy_to_toto(symbol, source="INTEL"):
     if source == "NEW":
         msg = f"🍼 عملة جديدة: اشتري {symbol} يا كوكو (NEW)"
@@ -35,7 +33,6 @@ def send_buy_to_toto(symbol, source="INTEL"):
         requests.post(TOTO_WEBHOOK, json={"message": {"text": msg}})
     except: pass
 
-# طلب API موقع Bitvavo
 def bitvavo_request(path):
     timestamp = str(int(time.time() * 1000))
     method = "GET"
@@ -53,12 +50,10 @@ def bitvavo_request(path):
     except:
         return []
 
-# شموع آخر 3 دقائق
 def get_last_3m_candles(symbol):
     path = f"/v2/market/{symbol}/candles?interval=1m&limit=3"
     return bitvavo_request(path)
 
-# السعر الحالي
 def get_price(symbol):
     try:
         url = f"https://api.bitvavo.com/v2/ticker/price?market={symbol}"
@@ -66,7 +61,6 @@ def get_price(symbol):
     except:
         return None
 
-# دالة السكور الذكي
 def compute_score(candles):
     if len(candles) < 3:
         return 0
@@ -79,7 +73,6 @@ def compute_score(candles):
     except:
         return 0
 
-# بدء المراقبة
 def monitor(symbol):
     price = get_price(symbol)
     if not price or price < 0.005:
@@ -88,11 +81,12 @@ def monitor(symbol):
         "start": datetime.utcnow().isoformat()
     }))
 
-# فحص العملات تحت المراقبة
 def watch_checker():
     while True:
         now = datetime.utcnow()
         watching = r.hgetall("watching")
+        cold_coins = []
+
         for symbol_b, data_b in watching.items():
             symbol = symbol_b.decode()
             try:
@@ -123,11 +117,16 @@ def watch_checker():
             minutes = (now - start).total_seconds() / 60
             if not found_signal and minutes >= 7:
                 r.hdel("watching", symbol)
+                cold_coins.append(symbol.split("-")[0])
             elif minutes >= MONITOR_DURATION:
                 r.hdel("watching", symbol)
+
+        if cold_coins:
+            msg = "🧊 العملات الباردة (تم استبعادها):\n" + "\n".join([f"• {coin}" for coin in cold_coins])
+            send_message(msg)
+
         time.sleep(MONITOR_INTERVAL)
 
-# اختيار أذكى 100 عملة
 def collect_top_100():
     tickers = bitvavo_request("/v2/ticker/price")
     candidates = []
@@ -150,13 +149,11 @@ def collect_top_100():
     for symbol, score in top:
         monitor(symbol)
 
-# جدولة المراقبة كل نصف ساعة
 def scheduler():
     while True:
         collect_top_100()
         time.sleep(1800)
 
-# أمر "شو عم تعمل؟"
 @app.route("/", methods=["POST"])
 def webhook():
     data = request.get_json()
