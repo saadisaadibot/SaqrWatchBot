@@ -13,7 +13,6 @@ PORT = int(os.getenv("PORT", 5000))
 TOTO_WEBHOOK = "https://totozaghnot-production.up.railway.app/webhook"
 r = redis.from_url(REDIS_URL)
 
-allowed_markets = set()
 COLLECTION_INTERVAL = 180
 MONITOR_DURATION = 30
 MONITOR_INTERVAL = 30
@@ -54,18 +53,7 @@ def bitvavo_request(path):
         log_error(f"فشل طلب Bitvavo: {e}")
         return []
 
-def update_allowed_markets():
-    global allowed_markets
-    try:
-        markets = bitvavo_request("/v2/markets")
-        allowed_markets = {m["market"] for m in markets if m.get("supportsCandles", False)}
-        print(f"✅ تم تحديث قائمة الأسواق ({len(allowed_markets)} زوج)")
-    except Exception as e:
-        log_error("فشل تحديث قائمة الأسواق")
-
 def get_last_3m_candles(symbol):
-    if symbol not in allowed_markets:
-        return []
     try:
         return bitvavo_request(f"/v2/market/{symbol}/candles?interval=1m&limit=3")
     except Exception as e:
@@ -144,12 +132,18 @@ def watch_checker():
 
 def collect_top_100():
     try:
-        tickers = bitvavo_request("/v2/ticker/price")
+        tickers = requests.get("https://api.bitvavo.com/v2/ticker/price").json()
+        if not tickers or len(tickers) == 0:
+            log_error("❌ لم يتم جلب أي أزواج من Bitvavo.")
+            send_message("🚫 لم يتم جلب أي عملات من Bitvavo. تحقق من المفاتيح أو الاتصال.")
+            return
+
+        print(f"✅ تم جلب {len(tickers)} زوج من Bitvavo.")
         candidates = []
         for t in tickers:
             try:
                 symbol = t["market"]
-                if not symbol.endswith("-EUR") or symbol not in allowed_markets:
+                if not symbol.endswith("-EUR"):
                     continue
                 price = float(t["price"])
                 if price < 0.005 or r.hexists("watching", symbol):
@@ -203,7 +197,6 @@ def home():
 def start():
     try:
         r.flushall()
-        update_allowed_markets()
         send_message("🤖 تم تشغيل KOKO INTEL MODE™ - تمت تصفية الذاكرة والانطلاق ✅")
         threading.Thread(target=scheduler).start()
         threading.Thread(target=watch_checker).start()
