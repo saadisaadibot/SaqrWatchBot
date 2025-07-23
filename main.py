@@ -55,14 +55,14 @@ def bitvavo_request(path):
         return []
 
 def update_allowed_markets():
-    global allowed_markets
     try:
         markets = bitvavo_request("/v2/markets")
-        allowed_markets = set(m["market"] for m in markets if m["market"].endswith("-EUR"))
+        global allowed_markets
+        allowed_markets = {m["market"] for m in markets if m["market"].endswith("-EUR")}
         print(f"✅ تم تحديث قائمة الأسواق ({len(allowed_markets)} زوج)")
     except Exception as e:
-        log_error(f"فشل تحديث قائمة الأسواق: {e}")
-        allowed_markets = set()
+        log_error(f"فشل تحديث الأسواق المسموحة: {e}")
+        allowed_markets.clear()
 
 def get_last_3m_candles(symbol):
     if symbol not in allowed_markets:
@@ -144,8 +144,6 @@ def watch_checker():
         time.sleep(MONITOR_INTERVAL)
 
 def collect_top_100():
-    if not allowed_markets:
-        update_allowed_markets()
     try:
         tickers = bitvavo_request("/v2/ticker/price")
         candidates = []
@@ -206,7 +204,7 @@ def home():
 def start():
     try:
         r.flushall()
-        update_allowed_markets()  # ✅ تحديث السوق قبل أي شيء
+        update_allowed_markets()
         send_message("🤖 تم تشغيل KOKO INTEL MODE™ - تمت تصفية الذاكرة والانطلاق ✅")
         threading.Thread(target=scheduler).start()
         threading.Thread(target=watch_checker).start()
